@@ -1,3 +1,5 @@
+from imports import *
+from gl0_and_gl1 import GL0Element, GL1Element
 
 """## Mapping to a new data structure"""
 

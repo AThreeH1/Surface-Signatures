@@ -194,8 +194,8 @@ class GL1Element:
             raise ValueError("GL1Element objects must have matching dimensions for multiplication.")
 
         n, p, q = self.n, self.p, self.q
-        matrix2 = self.matrix
         matrix1 = other.matrix
+        matrix2 = self.matrix
 
         # Extract submatrices
         P1 = matrix1[:n, :n] + np.eye(n)
