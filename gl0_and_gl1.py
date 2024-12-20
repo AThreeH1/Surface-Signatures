@@ -1,13 +1,3 @@
-# import os
-# import sys
-
-# # Get the directory of the current script
-# current_dir = os.path.dirname(__file__)
-
-# # Append the parent directory to the system path
-# parent_dir = os.path.abspath(os.path.join(current_dir, os.pardir))
-# sys.path.append(parent_dir)
-
 # Now you can import your modules
 from imports import *
 
@@ -173,7 +163,25 @@ class GL1Element:
             raise ValueError(f"Matrix must have dimensions {expected_shape}, got {self.matrix.shape}.")
 
     def inv(self):
-        return GL1Element(self.n, self.p, self.q, np.linalg.inv(self.matrix))
+        n, p, q = self.n, self.p, self.q
+        matrix1 = self.matrix
+
+        # Extract submatrices
+        P = matrix1[:n, :n] + np.eye(n)
+        B = matrix1[:n, n:]
+        R = matrix1[n:, :n]
+        N = matrix1[n:, n:]
+
+        P_new = - (P - np.eye(n)) @ (np.linalg.inv(P))
+        B_new = (P - np.eye(n)) @ (np.linalg.inv(P)) @ B - B
+        R_new = - R @ np.linalg.inv(P) 
+        N_new = R @ np.linalg.inv(P) @ B - N
+
+        top_row = np.hstack((P_new, B_new))
+        bottom_row = np.hstack((R_new, N_new))
+        result_matrix = np.vstack((top_row, bottom_row))
+
+        return GL1Element(n, p, q, result_matrix)
 
     def __mul__(self, other):
         """
@@ -186,8 +194,8 @@ class GL1Element:
             raise ValueError("GL1Element objects must have matching dimensions for multiplication.")
 
         n, p, q = self.n, self.p, self.q
-        matrix1 = self.matrix
-        matrix2 = other.matrix
+        matrix2 = self.matrix
+        matrix1 = other.matrix
 
         # Extract submatrices
         P1 = matrix1[:n, :n] + np.eye(n)
@@ -295,25 +303,23 @@ def tau_morphism():
     feedback_a = gl1_a.feedback()
     feedback_b = gl1_b.feedback()
 
-    composed_feedback = feedback_b * feedback_a
+    composed_feedback = feedback_a * feedback_b 
 
     assert np.array_equal(feedback_product.tuple[0], composed_feedback.tuple[0]), "Feedback morphism fails for M_V"
     assert np.array_equal(feedback_product.tuple[1], composed_feedback.tuple[1]), "Feedback morphism fails for M_U"
 
 def peiffer_identity():
     n, p, q = 2, 1, 1
-    gl1 = GL1Element.random_element(n, p, q)
-    gl2 = GL1Element.random_element(n, p, q)
-    print("gl1 = ", gl1.matrix)
-    print("gl2 = ", gl2.matrix)
-    print("gl1 feedback = ", gl1.feedback().tuple)
+    gl1_a = GL1Element.random_element(n, p, q)
+    gl1_b = GL1Element.random_element(n, p, q)
 
-    LHS = (gl1.feedback()).act_on(gl2)
-    print("LHS = ", LHS.matrix)
-    RHS = gl1 * gl2 * gl1.inv()
-    print("gl1 inv = ", gl1.inv().matrix)
-    print("RHS = ", RHS.matrix)
+    LHS = (gl1_a.feedback()).act_on(gl1_b)
+    RHS = gl1_a * gl1_b * gl1_a.inv()
 
+    Zeros = np.zeros((n+p, n+q))
+    Identity_gl1 = gl1_a * (gl1_a.inv())
+
+    assert np.allclose(Zeros, Identity_gl1.matrix)
     assert np.allclose(LHS.matrix, RHS.matrix)
 
 if __name__ == "__main__":
