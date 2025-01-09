@@ -296,5 +296,3 @@ if __name__ == "__main__":
     tau_morphism()
     equivariance()
     peiffer_identity()
-
-/teamspace/studios/this_studio/Surface-Signatures

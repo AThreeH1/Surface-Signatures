@@ -116,3 +116,6 @@ if __name__ == "__main__":
             Image[i,j].validate()
 
     print("A = ",Image[0,0].down.tuple,"B = ", Image[1,0].up.tuple)
+
+
+/teamspace/studios/this_studio/Surface-Signatures
