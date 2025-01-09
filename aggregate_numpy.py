@@ -1,126 +1,121 @@
 from imports import *
 from gl0_and_gl1 import GL0Element, GL1Element
-from custom_matrix import CustomMatrix, mapping
+from custom_matrix import TwoCell, GridOf2Cells, mapping
 
-def composition(Map, a=None, b=None):
+def horizontal_first_aggregate(Image, a=None, b=None):
     """
-    Takes in a Map of input image and returns the signature of the image
+    Takes in a Image of input image and returns the signature of the image
     Args:
-        Map = Map of the image
+        Image = Image of the image (type GridOf2Cells)
         a = signature till row a
         b = signature till column b
 
+    Returns:
+        GridOf2Cells of shape 1,1
+
     Workings:
-        Map(2 dims) --> Map(1 dim: Horizontal) --> Signature matrix
+        Image(2 dims) --> Image(1 dim: Horizontal) --> Signature matrix
     """
 
     if a == None and b == None:
-        a = Map.rows
-        b = Map.cols
+        a = Image.rows
+        b = Image.cols
 
-    Aggregate_horizontal = CustomMatrix(a, 1)
+    Aggregate_horizontal = GridOf2Cells(a, 1)
+    temp_value = Aggregate_horizontal[a - 1, 0]
+    # print('XXX temp_value=', temp_value, type(temp_value))
 
     for i in range(a):
-        Aggregate_dim1 = Map[i, 0].value
-        DOWN = Map[i, 0].down
-        UP = Map[i, 0].up
-        LEFT = Map[i, 0].left
-        RIGHT = Map[i, b-1]. right
+        # print('i=', i) 
+        Aggregate_temp = Image[i, 0]
+        for j in range(b-1):
+            # print('j=', i)
+            Aggregate_temp = TwoCell.horizontal_compose_with(Aggregate_temp, Image[i, j+1])
+            # print('Aggregate_temp=', Aggregate_temp, type(Aggregate_temp))
+        # print('Aggregate_temp=', Aggregate_temp, type(Aggregate_temp))
+        clone = Aggregate_temp.clone()
+        # print('clone=', clone, type(clone))
+        Aggregate_horizontal[i, 0] = clone
+    
+    # print('a-1=',a-1)
+    temp_value = Aggregate_horizontal[a - 1, 0]
+    # print('temp_value=', temp_value, type(temp_value))
 
-        for j in range(1, b):
-            Aggregate_dim1 = (DOWN.act_on(Map[i, j].value)) * (Aggregate_dim1)
-            DOWN = DOWN * Map[i, j].down
-            UP = UP * Map[i, j].up
-            
-        Aggregate_horizontal[i, 0].value = Aggregate_dim1
-        Aggregate_horizontal[i, 0].down = DOWN
-        Aggregate_horizontal[i, 0].up = UP
-        Aggregate_horizontal[i, 0].left = LEFT
-        Aggregate_horizontal[i, 0].right = RIGHT
+    Aggregate = GridOf2Cells(1,1)
+    for i in range(1, a):
+        # print('i=', i)
+        temp_value = TwoCell.vertical_compose_with(temp_value, Aggregate_horizontal[a - (i + 1), 0])
+        # print('temp_value=', temp_value, type(temp_value))
 
-# TODO change this to a method, horizontal and vertical
-
-    Aggregate = CustomMatrix(1,1)
-    Aggregate_dim2 = Aggregate_horizontal[Aggregate_horizontal.rows - 1, 0].value
-    DOWN_1 = Aggregate_horizontal[Aggregate_horizontal.rows - 1, 0].down
-    UP_1 = Aggregate_horizontal[0, 0].up
-    LEFT_1 = Aggregate_horizontal[Aggregate_horizontal.rows - 1,0].left
-    RIGHT_1 = Aggregate_horizontal[Aggregate_horizontal.rows - 1,0].right
-
-    for i in range(1, Aggregate_horizontal.rows):
-        Aggregate_dim2 = (LEFT_1.act_on(Aggregate_horizontal[Aggregate_horizontal.rows - (i+1), 0].value)) * (Aggregate_dim2)
-        LEFT_1 = LEFT_1 * Aggregate_horizontal[Aggregate_horizontal.rows - (i+1), 0].left
-        RIGHT_1 = RIGHT_1 * Aggregate_horizontal[Aggregate_horizontal.rows - (i+1), 0].right
-
-    Aggregate[0, 0].value = Aggregate_dim2
-    Aggregate[0, 0].left = LEFT_1
-    Aggregate[0, 0].right = RIGHT_1
-    Aggregate[0, 0].up = UP_1
-    Aggregate[0, 0].down = DOWN_1
+    clone = temp_value.clone()
+    # print('clone=', clone, type(clone))
+    Aggregate[0,0] = clone
 
     return Aggregate
 
-def vertical_first_composition(Map):
-    """
-    Takes in a Map of input image and returns the signature of the image
-    Args:
-        Map = Map of the image
+def vertical_first_aggregate(Image, a = None, b = None):
 
-    Workings:
-        Map(2 dims) --> Map(1 dim: Vertical) --> Signature matrix
-    """
-    # Step 1: Aggregate Vertically
-    Aggregate_vertical = CustomMatrix(1, Map.cols)
+    if a == None and b == None:
+        a = Image.rows
+        b = Image.cols
 
-    for j in range(Map.cols):
-        Aggregate_dim1 = Map[Map.rows - 1, j].value
-        LEFT = Map[Map.rows - 1, j].left
-        RIGHT = Map[Map.rows - 1, j].right
-        UP = Map[0, j].up
-        DOWN = Map[Map.rows - 1, j].down
+    Aggregate_vertical = GridOf2Cells(1, b)
 
-        for i in range(1, Map.rows):
-            Aggregate_dim1 = (LEFT.act_on(Map[Map.rows - (i + 1), j].value)) * (Aggregate_dim1)
-            LEFT = LEFT * Map[Map.rows - (i + 1), j].left
-            RIGHT = RIGHT * Map[Map.rows - (i + 1), j].right
+    for i in range(b):
+        Aggregate_temp = Image[a-1, i]
+        for j in range(1, a):
+            Aggregate_temp = TwoCell.vertical_compose_with(Aggregate_temp, Image[a-(j+1), i])
+        Aggregate_vertical[0, i] = Aggregate_temp.clone()
+    
+    Aggregate = GridOf2Cells(1,1)
 
-        Aggregate_vertical[0, j].value = Aggregate_dim1
-        Aggregate_vertical[0, j].left = LEFT
-        Aggregate_vertical[0, j].right = RIGHT
-        Aggregate_vertical[0, j].up = UP
-        Aggregate_vertical[0, j].down = DOWN
+    temp_value = Aggregate_vertical[0, 0]
 
-    # Step 2: Aggregate Horizontally
-    Aggregate = CustomMatrix(1, 1)
-    Aggregate_dim2 = Aggregate_vertical[0, 0].value
-    LEFT_1 = Aggregate_vertical[0, 0].left
-    RIGHT_1 = Aggregate_vertical[0, Aggregate_vertical.cols - 1].right
-    UP_1 = Aggregate_vertical[0, 0].up
-    DOWN_1 = Aggregate_vertical[0, 0].down
+    for i in range(1, b):
+        temp_value = TwoCell.horizontal_compose_with(temp_value, Aggregate_vertical[0, i])
 
-    for j in range(1, Aggregate_vertical.cols):
-        Aggregate_dim2 = (DOWN_1.act_on(Aggregate_vertical[0, j].value)) * (Aggregate_dim2)
-        UP_1 = UP_1 * Aggregate_vertical[0, j].up
-        DOWN_1 = DOWN_1 * Aggregate_vertical[0, j].down
-
-    Aggregate[0, 0].value = Aggregate_dim2
-    Aggregate[0, 0].left = LEFT_1
-    Aggregate[0, 0].right = RIGHT_1
-    Aggregate[0, 0].up = UP_1
-    Aggregate[0, 0].down = DOWN_1
-
+    Aggregate[0,0] = temp_value.clone()
     return Aggregate
 
 if __name__ == "__main__":
-    m = 5
+    m = 3
+    np.random.seed(42)
     image = np.random.rand(m, m)
 
-    Map = mapping(image)
-    Aggregate = composition(Map)
-    print(Aggregate[0,0].value.matrix)
-    Aggregate_2 = vertical_first_composition(Map)
-    print(Aggregate_2[0,0].value.matrix)
-    assert np.allclose(Aggregate[0,0].value.matrix, Aggregate_2[0,0].value.matrix)
+    Image = mapping(image)
+    print("Starts here")
+    # print('image=\n', image, type(image))
+    # print('Image=\n', Image, type(Image))
+    Aggregate_1 = horizontal_first_aggregate(Image)
+    # print()
+    # print()
+    print("Horizontal first aggregate =\n", Aggregate_1[0,0].value.matrix)
+    # print()
+    Aggregate_2 = vertical_first_aggregate(Image)
+    print("Vertical first aggregate =\n",Aggregate_2[0,0].value.matrix)
+    # assert np.allclose(Aggregate_1[0,0].value.matrix, Aggregate_2[0,0].value.matrix)
+
+    print("H first manual = ")
+    
+    Step1 = Image[1,0].horizontal_compose_with( Image[1,1] )
+    check_1 = Step1.validate()
+    Step2 = Image[0,0].horizontal_compose_with( Image[0,1] )
+    check_2 = Step2.validate()
+    Step3 = Step1.vertical_compose_with( Step2 )
+    check_3 = Step3.validate()
+    print( Step3.value.matrix )
+
+    print("V first manual = ")
+    print( Image[1,0].vertical_compose_with( Image[0,0] ).horizontal_compose_with(  Image[1,1].vertical_compose_with( Image[0,1] ) ).value.matrix )
+    # print( Image[0,0].vertical_compose_with( Image[1,])
+
+    image = np.random.rand(5, 5)
+    Image = mapping(image)
+    for i in range(Image.rows):
+        for j in range(Image.cols):
+            Image[i,j].validate()
+    assert np.allclose( Image[0,0].horizontal_compose_with( Image[1,0] ).horizontal_compose_with( Image[2,0] ).value.matrix, 
+                        Image[0,0].horizontal_compose_with( Image[1,0].horizontal_compose_with( Image[2,0] ) ).value.matrix )
 
 # TODO sanity checks (order doesn't matter)
 # TODO image to image

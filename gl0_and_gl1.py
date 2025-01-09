@@ -1,4 +1,3 @@
-# Now you can import your modules
 from imports import *
 
 class GL0Element:
@@ -13,6 +12,9 @@ class GL0Element:
             M_U = np.eye( n+q, dtype=int )
 
         self.tuple = (M_V, M_U)
+
+    def almost_equal(self, other):
+        return np.allclose( self.tuple[0], other.tuple[0] ) and np.allclose( self.tuple[1], other.tuple[1] )
 
     def inv(self):
         M_V, M_U = self.tuple
@@ -90,7 +92,7 @@ class GL0Element:
         p = q = 1
         fV = np.eye(n+p)
         fU = np.eye( n+q )
-        dX = Xt - Xs
+        dX = Xs- Xt
         fV[0, 0] = fU[0, 0] = np.exp(dX)
         fV[0, 1] = fV[0, 2] = fV[1, 0] = fV[1, 2] = fU[0, 1] = fU[1, 0] = 0
         fV[1, 1] = fU[1, 1] = np.exp((dX)**2)
@@ -110,7 +112,8 @@ class GL0Element:
         Reverse the feedback mapping from GL0 to GL1.
 
         Parameters:
-            gl0_element (GL0Element): An element of GL0 represented as (M_V, M_U).
+            gl0_element (GL0Element): An element of GL0 represented as (M_V, M_U)
+            N                       : TODO
 
         Returns:
             GL1Element: The corresponding GL1Element reconstructed from (M_V, M_U).
@@ -127,8 +130,8 @@ class GL0Element:
 
         # Extract components from M_V and M_U
         P = M_V[:n, :n] - np.eye(n)  # P = top-left block of M_V minus Id_n
-        B = M_V[:n, n:]              # B = top-right block of M_V
-        R = M_U[n:, :n]              # R = bottom-left block of M_U
+        B = M_U[:n, n:]              # B = top-right block of M_V
+        R = M_V[n:, :n]              # R = bottom-left block of M_U
 
         # Combine blocks into GL1 matrix
         top_row = np.hstack((P, B))
@@ -274,7 +277,6 @@ class GL1Element:
 
         return GL1Element(n, p, q, matrix)
 
-np.random.seed(42)
 def equivariance():
 
     n, p, q = 2, 1, 1
@@ -290,7 +292,6 @@ def equivariance():
 
     assert np.allclose(LHS.tuple[0], RHS.tuple[0])
     assert np.allclose(LHS.tuple[1], RHS.tuple[1])
-
 
 def tau_morphism():
     n, p, q = 2, 1, 1
@@ -318,7 +319,7 @@ def peiffer_identity():
 
     Zeros = np.zeros((n+p, n+q))
     Identity_gl1 = gl1_a * (gl1_a.inv())
-
+    print(Identity_gl1.matrix)
     assert np.allclose(Zeros, Identity_gl1.matrix)
     assert np.allclose(LHS.matrix, RHS.matrix)
 
@@ -326,3 +327,9 @@ if __name__ == "__main__":
     tau_morphism()
     equivariance()
     peiffer_identity()
+
+# TODO triton
+# TODO mnist
+# TODO latex - reverse feedback
+# TODO Blelloch
+

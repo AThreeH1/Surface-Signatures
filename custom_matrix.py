@@ -2,23 +2,62 @@ from imports import *
 from gl0_and_gl1 import GL0Element, GL1Element
 
 """## Mapping to a new data structure"""
+# TODO method 
+# TODO interchange property 
 
-class MatrixElement:
-    def __init__(self, value=None):
-        self.value = value
-        self.left = None
-        self.right = None
-        self.up = None
-        self.down = None
+class TwoCell:
+    def __init__(self, value=None, left= None, right = None, up = None, down = None):
+        self.value = value 
+        self.left = left
+        self.right = right
+        self.up = up
+        self.down = down
+
+    def validate(self):
+        assert np.allclose((self.down * self.right * self.up.inv() * self.left.inv()).tuple, self.value.feedback().tuple)
+
+    def clone(self):
+        # Copying Matrix Element
+        new_elem = TwoCell(
+            value = self.value,
+            left = self.left,
+            right = self.right,
+            up = self.up,
+            down = self.down
+        )
+        return new_elem
+
+    def horizontal_compose_with(self, other):
+        assert (self.right).almost_equal( other.left )
+
+        value = ((self.down).act_on(other.value))*self.value
+        left = self.left
+        right = other.right
+        up = self.up * other.up
+        down = self.down * other.down
+        
+        return TwoCell(value, left, right, up, down)
+
+
+    def vertical_compose_with(self, other):
+        assert self.up.almost_equal( other.down )
+
+        value = self.value*((self.left).act_on(other.value))
+        left = self.left * other.left
+        right = self.right * other.right
+        up = other.up
+        down = self.down 
+
+        return TwoCell(value, left, right, up, down)
 
     def __repr__(self):
-        return f"MatrixElement(value={self.value}, l={self.left}, r={self.right}, u={self.up}, d={self.down})"
+        return f"TwoCell(value={self.value}, l={self.left}, r={self.right}, u={self.up}, d={self.down})"
 
-class CustomMatrix:
+class GridOf2Cells:
     def __init__(self, rows, cols):
         self.rows = rows
         self.cols = cols
-        self.matrix = [[MatrixElement() for _ in range(cols)] for _ in range(rows)]
+        self.matrix = [[TwoCell() for _ in range(cols)] for _ in range(rows)]
 
     def __getitem__(self, indices):
         row, col = indices
@@ -30,32 +69,50 @@ class CustomMatrix:
     def __setitem__(self, indices, value):
         row, col = indices
         if 0 <= row < self.rows and 0 <= col < self.cols:
-            self.matrix[row][col].value = value
+            # self.matrix[row][col].value = value
+            self.matrix[row][col] = value
         else:
             raise IndexError("Matrix indices out of range")
+    def __repr__(self):
+        as_string = [ ",".join( [repr(v) for v in row] ) for row in self.matrix ]
+        return f"GridOf2Cells(rows={self.rows},cols={self.cols},matrix={as_string})"
 
 def mapping(image):
     """
-    maps elements from image to a new data structure
+    maps elements from image to the custom matrix
     """
     m = image.shape[0]
+    n = image.shape[1]
     gl0 = GL0Element(2, 1, 1)
-    Map = CustomMatrix(m-1, m-1)
+    Map = GridOf2Cells(m-1, n-1)
     for i in range(m-1):
-        for j in range(m-1):
+        for j in range(n-1):
             pu = gl0.from_vector(image[i, j], image[i, j+1])
-            pd = gl0.from_vector(image[i+1, j+1], image[i+1, j])
+            pd = gl0.from_vector(image[i+1, j], image[i+1, j+1])
             pl = gl0.from_vector(image[i+1, j], image[i, j])
-            pr = gl0.from_vector(image[i, j+1], image[i+1, j+1])
+            pr = gl0.from_vector(image[i+1, j+1], image[i, j+1])
 
             Map[i, j].left = pl
             Map[i, j].right = pr
             Map[i, j].up = pu
             Map[i, j].down = pd
 
-            Edges_mul = pd * pr * pu * pl
+            Edges_mul = pd * pr * pu.inv() * pl.inv()
             N = [[image[i, j] + image[i+1, j+1] - image[i+1, j] - image[i, j+1]]]
 
             GL1 = gl0.reverse_feedback(Edges_mul, N)
             Map[i, j].value = GL1
     return Map
+
+if __name__ == "__main__":
+    m = 3
+    n = 4
+    np.random.seed(42)
+    image = np.random.rand(m, n)
+
+    Image = mapping(image)
+    for i in range(m-1):
+        for j in range(n-1):
+            Image[i,j].validate()
+
+    print("A = ",Image[0,0].down.tuple,"B = ", Image[1,0].up.tuple)
