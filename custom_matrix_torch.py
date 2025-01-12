@@ -1,36 +1,53 @@
-import torch
+from imports import *
 from gl0_and_gl1_torch import GL0Element, GL1Element
-
-import torch
 
 class TwoCell:
     def __init__(self, value=None, left=None, right=None, up=None, down=None):
-        self.value = value
-        self.left = left
-        self.right = right
-        self.up = up
-        self.down = down
+        """
+        A TwoCell represents a batch of 2D grid cells, where each cell has GL1 or GL0 elements in its
+        four directions (left, right, up, down) and a central value.
+        """
+        self.value = value  # GL1Element (batched)
+        self.left = left    # GL0Element (batched)
+        self.right = right  # GL0Element (batched)
+        self.up = up        # GL0Element (batched)
+        self.down = down    # GL0Element (batched)
 
     def validate(self):
-        assert torch.allclose((self.down * self.right * self.up.inv() * self.left.inv()).tuple[0], self.value.feedback().tuple[0])
-        # print(f"{(self.down * self.right * self.up.inv() * self.left.inv()).tuple[1]=}", f"{self.value.feedback().tuple[1]=}")
-        assert torch.allclose((self.down * self.right * self.up.inv() * self.left.inv()).tuple[1], self.value.feedback().tuple[1], atol = 0.001)
+        """
+        Validates the consistency condition for each TwoCell in the batch.
+        """
+        assert torch.allclose(
+            (self.down * self.right * self.up.inv() * self.left.inv()).tuple[0],
+            self.value.feedback().tuple[0],
+            atol=1e-6
+        ), "Validation failed for the TwoCell batch."
+
+        assert torch.allclose(
+            (self.down * self.right * self.up.inv() * self.left.inv()).tuple[1],
+            self.value.feedback().tuple[1],
+            atol=1e-6
+        ), "Validation failed for the TwoCell batch."
 
     def clone(self):
-        # Cloning the TwoCell instance
-        new_elem = TwoCell(
-            value = self.value,
-            left = self.left,
-            right = self.right,
-            up = self.up,
-            down = self.down
+        """
+        Creates a deep copy of the TwoCell, preserving batched structure.
+        """
+        return TwoCell(
+            value=self.value,
+            left=self.left,
+            right=self.right,
+            up=self.up,
+            down=self.down
         )
-        return new_elem
 
     def horizontal_compose_with(self, other):
-        assert self.right.almost_equal(other.left)
+        """
+        Horizontally composes the current TwoCell batch with another, assuming batched operations.
+        """
+        assert self.right.almost_equal(other.left), "Horizontal composition failed: `right` and `left` mismatch."
 
-        value = self.down.act_on(other.value) * self.value
+        value = (self.down.act_on(other.value)) * self.value
         left = self.left
         right = other.right
         up = self.up * other.up
@@ -39,7 +56,10 @@ class TwoCell:
         return TwoCell(value, left, right, up, down)
 
     def vertical_compose_with(self, other):
-        assert self.up.almost_equal(other.down)
+        """
+        Vertically composes the current TwoCell batch with another, assuming batched operations.
+        """
+        assert self.up.almost_equal(other.down), "Vertical composition failed: `up` and `down` mismatch."
 
         value = self.value * (self.left.act_on(other.value))
         left = self.left * other.left
@@ -50,13 +70,17 @@ class TwoCell:
         return TwoCell(value, left, right, up, down)
 
     def __repr__(self):
-        return f"TwoCell(value={self.value}, l={self.left}, r={self.right}, u={self.up}, d={self.down})"
-
+        return (
+            f"TwoCell(value={self.value}, "
+            f"left={self.left}, right={self.right}, "
+            f"up={self.up}, down={self.down})"
+        )
 
 class GridOf2Cells:
-    def __init__(self, rows, cols):
+    def __init__(self, batch_size, rows, cols):
         self.rows = rows
         self.cols = cols
+        self.batch_size = batch_size
         self.matrix = [[TwoCell() for _ in range(cols)] for _ in range(rows)]
 
     def __getitem__(self, indices):
@@ -75,47 +99,63 @@ class GridOf2Cells:
 
     def __repr__(self):
         as_string = [",".join([repr(v) for v in row]) for row in self.matrix]
-        return f"GridOf2Cells(rows={self.rows}, cols={self.cols}, matrix={as_string})"
+        return f"GridOf2Cells(rows={self.rows}, cols={self.cols}, batch_size={self.batch_size}, matrix={as_string})"
 
 
 def mapping(image):
     """
-    Maps elements from an image (2D PyTorch tensor) to the custom matrix.
+    Maps elements from a batched image to the custom batched matrix structure.
+    Args:
+        image (torch.Tensor): Batched tensor of shape (batch_size, m, n)
+    Returns:
+        GridOf2Cells: Mapped batched structure
     """
-    m, n = image.shape
-    gl0 = GL0Element(2, 1, 1)
-    Map = GridOf2Cells(m - 1, n - 1)
+    batch_size, m, n = image.shape
+    gl0 = GL0Element(batch_size, 2, 1, 1)
+    Map = GridOf2Cells(batch_size, m - 1, n - 1)
 
     for i in range(m - 1):
         for j in range(n - 1):
-            pu = gl0.from_vector(image[i, j], image[i, j + 1])
-            pd = gl0.from_vector(image[i + 1, j], image[i + 1, j + 1])
-            pl = gl0.from_vector(image[i + 1, j], image[i, j])
-            pr = gl0.from_vector(image[i + 1, j + 1], image[i, j + 1])
+            # Create batched GL0 elements
+            pu = gl0.from_vector(batch_size, image[:, i, j], image[:, i, j + 1])
+            pd = gl0.from_vector(batch_size, image[:, i + 1, j], image[:, i + 1, j + 1])
+            pl = gl0.from_vector(batch_size, image[:, i + 1, j], image[:, i, j])
+            pr = gl0.from_vector(batch_size, image[:, i + 1, j + 1], image[:, i, j + 1])
 
+            # Assign to grid
             Map[i, j].left = pl
             Map[i, j].right = pr
             Map[i, j].up = pu
             Map[i, j].down = pd
 
+            # Compute Edges_mul in batch
             Edges_mul = pd * pr * pu.inv() * pl.inv()
-            N = torch.tensor([[image[i, j] + image[i + 1, j + 1] - image[i + 1, j] - image[i, j + 1]]])
 
+            # Compute N (batched tensor)
+            N = image[:, i, j] + image[:, i + 1, j + 1] - image[:, i + 1, j] - image[:, i, j + 1]
+            N = N.unsqueeze(-1).unsqueeze(-1)  # Shape (batch_size, 1, 1)
+
+            # Create GL1 elements in batch
             GL1 = gl0.reverse_feedback(Edges_mul, N)
             Map[i, j].value = GL1
 
     return Map
 
-
 if __name__ == "__main__":
-    m = 3
-    n = 4
+    batch_size = 1  # Number of batches
+    m = 3           # Rows in each image
+    n = 4           # Columns in each image
+
     torch.manual_seed(42)
-    image = torch.rand(m, n)
+    image = torch.rand(batch_size, m, n)  # Generate batched random images
 
-    Image = mapping(image)
-    for i in range(m-1):
-        for j in range(n-1):
-            Image[i,j].validate()
+    # Map the batched image
+    ImageBatch = mapping(image)
 
-    print("A = ",Image[0,0].down.tuple,"B = ", Image[1,0].up.tuple)
+    # Validate each TwoCellBatch in the grid for all batches
+    for i in range(m - 1):
+        for j in range(n - 1):
+            ImageBatch[i, j].validate()  # Validate each batch separately
+
+    # Example of accessing specific elements and printing their tuples for the first batch
+    print("A = ", ImageBatch[0, 0].down.tuple[0], "B = ", ImageBatch[1, 0].up.tuple[0])

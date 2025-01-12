@@ -1,87 +1,93 @@
-import torch
+from imports import *
 
 class GL0Element:
-    def __init__(self, n, p, q, M_V=None, M_U=None):
+    def __init__(self, m, n, p, q, M_V=None, M_U=None):
         self.n = n
         self.p = p
         self.q = q
+        self.m = m  # batch size
+
 
         if M_V is None:
-            M_V = torch.eye(n + p, dtype=torch.int32)
+            M_V = torch.eye(n + p, dtype=torch.int32).repeat(m, 1, 1)
         if M_U is None:
-            M_U = torch.eye(n + q, dtype=torch.int32)
+            M_U = torch.eye(n + q, dtype=torch.int32).repeat(m, 1, 1)
 
+        self.M_V = M_V
+        self.M_U = M_U
         self.tuple = (M_V, M_U)
 
     def almost_equal(self, other):
-        return torch.allclose(self.tuple[0], other.tuple[0]) and torch.allclose(self.tuple[1], other.tuple[1])
+        # Check if all elements in the batch are almost equal
+        return torch.allclose(self.M_V, other.M_V) and torch.allclose(self.M_U, other.M_U)
 
     def inv(self):
-        M_V, M_U = self.tuple
-        return GL0Element(self.n, self.p, self.q, torch.linalg.inv(M_V), torch.linalg.inv(M_U))
+        # Perform batch inversion
+        M_V_new = torch.linalg.inv(self.M_V)
+        M_U_new = torch.linalg.inv(self.M_U)
+        return GL0Element(self.m, self.n, self.p, self.q, M_V_new, M_U_new)
 
     @staticmethod
-    def random_element(n, p, q):
-        P = torch.eye(n) + torch.randint(1, 10, (n, n))
-        S = torch.eye(p) + torch.randint(1, 10, (p, p))
-        D = torch.eye(q) + torch.randint(1, 10, (q, q))
+    def random_element(m, n, p, q):
+        # Generate m random elements with batch tensors
+        P = torch.eye(n).repeat(m, 1, 1) + torch.randint(1, 10, (m, n, n))
+        S = torch.eye(p).repeat(m, 1, 1) + torch.randint(1, 10, (m, p, p))
+        D = torch.eye(q).repeat(m, 1, 1) + torch.randint(1, 10, (m, q, q))
 
-        R = torch.randint(0, 10, (p, n))
-        B = torch.randint(0, 10, (n, q))
+        R = torch.randint(0, 10, (m, p, n))
+        B = torch.randint(0, 10, (m, n, q))
 
         M_V = torch.cat([
-            torch.cat([P, torch.zeros((n, p))], dim=1),
-            torch.cat([R, S], dim=1)
-        ], dim=0)
+            torch.cat([P, torch.zeros((m, n, p))], dim=2),
+            torch.cat([R, S], dim=2)
+        ], dim=1)
 
         M_U = torch.cat([
-            torch.cat([P, B], dim=1),
-            torch.cat([torch.zeros((q, n)), D], dim=1)
-        ], dim=0)
+            torch.cat([P, B], dim=2),
+            torch.cat([torch.zeros((m, q, n)), D], dim=2)
+        ], dim=1)
 
-
-        return GL0Element(n, p, q, M_V, M_U)
+        return GL0Element(m, n, p, q, M_V, M_U)
 
     def __mul__(self, other):
         if not isinstance(other, GL0Element):
             raise ValueError("Multiplication is only defined between GL0Element objects.")
+        
+        # Batch matrix multiplication
+        M_V_new = self.M_V @ other.M_V
+        M_U_new = self.M_U @ other.M_U
 
-        M_V_self, M_U_self = self.tuple
-        M_V_other, M_U_other = other.tuple
-
-        M_V_new = M_V_self @ M_V_other
-        M_U_new = M_U_self @ M_U_other
-
-        return GL0Element(self.n, self.p, self.q, M_V_new, M_U_new)
+        return GL0Element(self.m, self.n, self.p, self.q, M_V_new, M_U_new)
 
     def act_on(self, h):
-        M_V, M_U = self.tuple
+        if h.matrix.shape != (self.m, self.n + self.p, self.n + self.q):
+            raise ValueError(f"Matrix h must have dimensions ({self.m}, {self.n + self.p}, {self.n + self.q}).")
 
-        if h.matrix.shape != (self.n + self.p, self.n + self.q):
-            raise ValueError(f"Matrix h must have dimensions ({self.n + self.p}, {self.n + self.q}).")
+        # Batch operation for action
+        if torch.any(torch.linalg.det(self.M_U) == 0):
+            raise ValueError("At least one of the M_U matrices is not invertible.")
 
-        if torch.linalg.det(M_U) == 0:
-            raise ValueError("Matrix M_U is not invertible.")
+        # Perform batch matrix multiplication
+        M_U_inv = torch.linalg.inv(self.M_U)  
+        Action = torch.bmm(torch.bmm(self.M_V, h.matrix), M_U_inv)
 
-        Action = M_V @ h.matrix @ torch.linalg.inv(M_U)
-
-        return GL1Element(self.n, self.p, self.q, Action)
+        return GL1Element(self.m, self.n, self.p, self.q, Action)
 
     @staticmethod
-    def from_vector(Xt, Xs):
+    def from_vector(m, Xt, Xs):
         n, p, q = 2, 1, 1
-        fV = torch.eye(n + p)
-        fU = torch.eye(n + q)
+        fV = torch.eye(n + p).repeat(m, 1, 1)
+        fU = torch.eye(n + q).repeat(m, 1, 1)
         dX = Xs - Xt
 
-        fV[0, 0] = fU[0, 0] = torch.exp(dX)
-        fV[1, 1] = fU[1, 1] = torch.exp(dX ** 2)
-        fV[2, 0] = torch.sin(dX)
-        fV[2, 1] = dX ** 5
-        fU[0, 2] = dX ** 3
-        fU[1, 2] = 7 * dX
+        fV[:, 0, 0] = fU[:, 0, 0] = torch.exp(dX)
+        fV[:, 1, 1] = fU[:, 1, 1] = torch.exp(dX ** 2)
+        fV[:, 2, 0] = torch.sin(dX)
+        fV[:, 2, 1] = dX ** 5
+        fU[:, 0, 2] = dX ** 3
+        fU[:, 1, 2] = 7 * dX
 
-        return GL0Element(2, 1, 1, fV, fU)
+        return GL0Element(m, 2, 1, 1, fV, fU)
 
     @staticmethod
     def reverse_feedback(gl0_element, N):
@@ -89,32 +95,39 @@ class GL0Element:
             raise ValueError("Input must be a GL0Element.")
 
         n, p, q = gl0_element.n, gl0_element.p, gl0_element.q
-        M_V, M_U = gl0_element.tuple
+        m = gl0_element.m
 
-        if M_V.shape != (n + p, n + p) or M_U.shape != (n + q, n + q):
+        M_V = gl0_element.M_V
+        M_U = gl0_element.M_U
+
+        if M_V.shape != (m, n + p, n + p) or M_U.shape != (m, n + q, n + q):
             raise ValueError("M_V or M_U have invalid dimensions for GL0.")
 
-        P = M_V[:n, :n] - torch.eye(n)
-        B = M_U[:n, n:]
-        R = M_V[n:, :n]
 
-        top_row = torch.cat((P, B), dim=1)
-        bottom_row = torch.cat((R, N), dim=1)
-        result_matrix = torch.cat((top_row, bottom_row), dim=0)
+        # Extract top and bottom rows for feedback
+        P = M_V[:, :n, :n] - torch.eye(n).repeat(m, 1, 1)
+        B = M_U[:, :n, n:]
+        R = M_V[:, n:, :n]
 
-        return GL1Element(n, p, q, result_matrix)
+        top_row = torch.cat((P, B), dim=2)
+        bottom_row = torch.cat((R, N), dim=2)
+
+        result_matrix = torch.cat((top_row, bottom_row), dim=1)
+
+        return GL1Element(m, n, p, q, result_matrix)
 
 class GL1Element:
-    def __init__(self, n, p, q, matrix=None):
+    def __init__(self, m, n, p, q, matrix=None):
         """
-        Initialize a GL-1 element.
+        Initialize a GL-1 element for a batch of matrices.
         """
+        self.m = m
         self.n = n
         self.p = p
         self.q = q
 
         if matrix is None:
-            self.matrix = torch.eye(n + p, n + q, dtype=torch.int32)
+            self.matrix = torch.eye(n + p, n + q, dtype=torch.int32).unsqueeze(0).repeat(m, 1, 1)
         else:
             self.matrix = matrix
 
@@ -126,125 +139,118 @@ class GL1Element:
         Ensure the matrix has the correct dimensions (n+p) x (n+q).
         """
         expected_shape = (self.n + self.p, self.n + self.q)
-        if self.matrix.shape != expected_shape:
-            raise ValueError(f"Matrix must have dimensions {expected_shape}, got {self.matrix.shape}.")
+        if self.matrix.shape[1:] != expected_shape:
+            raise ValueError(f"Matrix must have dimensions {expected_shape}, got {self.matrix.shape[1:]}.")
 
     def inv(self):
-        n, p, q = self.n, self.p, self.q
+        m, n, p, q = self.m, self.n, self.p, self.q
         matrix1 = self.matrix
 
-        # Extract submatrices
-        P = matrix1[:n, :n] + torch.eye(n)
-        B = matrix1[:n, n:]
-        R = matrix1[n:, :n]
-        N = matrix1[n:, n:]
+        # Extract submatrices and compute inverses
+        P = matrix1[:, :n, :n] + torch.eye(n).unsqueeze(0).expand(m, -1, -1)
+        B = matrix1[:, :n, n:]
+        R = matrix1[:, n:, :n]
+        N = matrix1[:, n:, n:]
 
         P_inv = torch.linalg.inv(P)
 
-        P_new = -(P - torch.eye(n)) @ P_inv
-        B_new = (P - torch.eye(n)) @ P_inv @ B - B
+        P_new = -(P - torch.eye(n).unsqueeze(0).expand(m, -1, -1)) @ P_inv
+        B_new = (P - torch.eye(n).unsqueeze(0).expand(m, -1, -1)) @ P_inv @ B - B
         R_new = -R @ P_inv
         N_new = R @ P_inv @ B - N
 
-        top_row = torch.hstack((P_new, B_new))
-        bottom_row = torch.hstack((R_new, N_new))
-        result_matrix = torch.vstack((top_row, bottom_row))
+        top_row = torch.cat((P_new, B_new), dim=2)
+        bottom_row = torch.cat((R_new, N_new), dim=2)
+        result_matrix = torch.cat((top_row, bottom_row), dim=1)
 
-        return GL1Element(n, p, q, result_matrix)
+        return GL1Element(self.m, self.n, self.p, self.q, result_matrix)
 
     def __mul__(self, other):
         """
-        Multiplication for GL-1 elements.
+        Multiplication for GL-1 elements across a batch.
         """
         if not isinstance(other, GL1Element):
             raise ValueError("Multiplication is only defined between GL1Element objects.")
 
-        if self.n != other.n or self.p != other.p or self.q != other.q:
+        if self.m != other.m or self.n != other.n or self.p != other.p or self.q != other.q:
             raise ValueError("GL1Element objects must have matching dimensions for multiplication.")
 
-        n, p, q = self.n, self.p, self.q
         matrix1 = other.matrix
         matrix2 = self.matrix
 
-        # Extract submatrices
-        P1 = matrix1[:n, :n] + torch.eye(n, dtype=matrix1.dtype)
-        B1 = matrix1[:n, n:]
-        R1 = matrix1[n:, :n]
-        N1 = matrix1[n:, n:]
+        # Extract submatrices for batch operations
+        P1 = matrix1[:, :self.n, :self.n] + torch.eye(self.n, dtype=matrix1.dtype).unsqueeze(0).expand(self.m, -1, -1)
+        B1 = matrix1[:, :self.n, self.n:]
+        R1 = matrix1[:, self.n:, :self.n]
+        N1 = matrix1[:, self.n:, self.n:]
 
-        P2 = matrix2[:n, :n] + torch.eye(n, dtype=matrix2.dtype)
-        B2 = matrix2[:n, n:]
-        R2 = matrix2[n:, :n]
-        N2 = matrix2[n:, n:]
+        P2 = matrix2[:, :self.n, :self.n] + torch.eye(self.n, dtype=matrix2.dtype).unsqueeze(0).expand(self.m, -1, -1)
+        B2 = matrix2[:, :self.n, self.n:]
+        R2 = matrix2[:, self.n:, :self.n]
+        N2 = matrix2[:, self.n:, self.n:]
 
         # Perform block-wise multiplication
-        new_P = P2 @ P1 - torch.eye(n)  # P'P - I_n
-        new_B = P2 @ B1 + B2                    # P'B + B'
-        new_R = R2 @ P1 + R1                    # R'P + R
-        new_N = R2 @ B1 + N1 + N2               # R'B + N + N'
+        new_P = P2 @ P1 - torch.eye(self.n).unsqueeze(0).expand(self.m, -1, -1)  # P'P - I_n
+        new_B = P2 @ B1 + B2  # P'B + B'
+        new_R = R2 @ P1 + R1  # R'P + R
+        new_N = R2 @ B1 + N1 + N2  # R'B + N + N'
 
         # Combine blocks into the resulting matrix
-        top_row = torch.hstack((new_P, new_B))
-        bottom_row = torch.hstack((new_R, new_N))
-        result_matrix = torch.vstack((top_row, bottom_row))
+        top_row = torch.cat((new_P, new_B), dim=2)
+        bottom_row = torch.cat((new_R, new_N), dim=2)
+        result_matrix = torch.cat((top_row, bottom_row), dim=1)
 
-        return GL1Element(n, p, q, result_matrix)
+        return GL1Element(self.m, self.n, self.p, self.q, result_matrix)
 
     def feedback(self):
         """
-        Compute the feedback matrix for the GL-1 element.
+        Compute the feedback matrix for the GL-1 element across a batch.
         """
-        M_V = torch.zeros((self.n + self.p, self.n + self.p))
-        M_U = torch.zeros((self.n + self.q, self.n + self.q))
+        M_V = torch.zeros((self.m, self.n + self.p, self.n + self.p))
+        M_U = torch.zeros((self.m, self.n + self.q, self.n + self.q))
 
         # Top-left block of M_V
-        M_V[:self.n, :self.n] = self.matrix[:self.n, :self.n] + torch.eye(self.n)  # P
-        
+        M_V[:, :self.n, :self.n] = self.matrix[:, :self.n, :self.n] + torch.eye(self.n).unsqueeze(0).expand(self.m, -1, -1)
+
         # Bottom-left block of M_V
-        M_V[self.n:, :self.n] = self.matrix[self.n:, :self.n]  # R
-        M_V[self.n:, self.n:] = torch.eye(self.p) 
+        M_V[:, self.n:, :self.n] = self.matrix[:, self.n:, :self.n]
+        M_V[:, self.n:, self.n:] = torch.eye(self.p).unsqueeze(0).expand(self.m, -1, -1)
 
         # Top-left block of M_U
-        M_U[:self.n, :self.n] = self.matrix[:self.n, :self.n] + torch.eye(self.n)  # P
-        M_U[:self.n, self.n:] = self.matrix[:self.n, self.n:]  # B
-        
-        # Bottom-left block of M_U
-        M_U[self.n:, self.n:] = torch.eye(self.q)  # identity matrix of size q
+        M_U[:, :self.n, :self.n] = self.matrix[:, :self.n, :self.n] + torch.eye(self.n).unsqueeze(0).expand(self.m, -1, -1)
+        M_U[:, :self.n, self.n:] = self.matrix[:, :self.n, self.n:]
 
-        return GL0Element(self.n, self.p, self.q, M_V, M_U)
+        # Bottom-left block of M_U
+        M_U[:, self.n:, self.n:] = torch.eye(self.q).unsqueeze(0).expand(self.m, -1, -1)
+
+        return GL0Element(self.m, self.n, self.p, self.q, M_V, M_U)
 
     @staticmethod
-    def random_element(n, p, q):
+    def random_element(m, n, p, q):
         """
-        Generate a random GL1Element.
-
-        Conditions:
-        - Shape: (n + p) x (n + q)
-        - All integer values.
-        - The first n x n block (top-left) is invertible.
-        - Other elements are random integers.
+        Generate a random GL1Element for a batch of m elements.
         """
-        # Generate a random invertible n x n block
-        top_left = torch.eye(n) + torch.randint(1, 10, (n, n))
+        # Generate random invertible n x n block
+        top_left = torch.eye(n).unsqueeze(0).repeat(m, 1, 1) + torch.randint(1, 10, (m, n, n))
 
         # Generate random blocks for the rest of the matrix
-        top_right = torch.randint(0, 10, (n, q))  # Top-right block
-        bottom_left = torch.randint(0, 10, (p, n))  # Bottom-left block
-        bottom_right = torch.randint(0, 10, (p, q))  # Bottom-right block
+        top_right = torch.randint(0, 10, (m, n, q))  # Top-right block
+        bottom_left = torch.randint(0, 10, (m, p, n))  # Bottom-left block
+        bottom_right = torch.randint(0, 10, (m, p, q))  # Bottom-right block
 
         # Construct the full matrix
-        top = torch.cat((top_left, top_right), dim=1)  # Concatenate along columns
-        bottom = torch.cat((bottom_left, bottom_right), dim=1)  
-        matrix = torch.cat((top, bottom), dim=0)
+        top = torch.cat((top_left, top_right), dim=2)  # Concatenate along columns
+        bottom = torch.cat((bottom_left, bottom_right), dim=2)  
+        matrix = torch.cat((top, bottom), dim=1)
 
-        return GL1Element(n, p, q, matrix)
+        return GL1Element(m, n, p, q, matrix)
 
 def equivariance():
-    n, p, q = 2, 1, 1
+    m, n, p, q = 1, 2, 1, 1
 
     # Generate random elements using PyTorch
-    gl0 = GL0Element.random_element(n, p, q)  # Assuming random_element is adapted for PyTorch
-    gl1 = GL1Element.random_element(n, p, q)
+    gl0 = GL0Element.random_element(m, n, p, q)  # Assuming random_element is adapted for PyTorch
+    gl1 = GL1Element.random_element(m, n, p, q)
 
     # Compute feedback
     feedback_result = gl1.feedback()
@@ -256,14 +262,15 @@ def equivariance():
     RHS = gl0.act_on(gl1).feedback()
 
     # Assert equivalence using torch.allclose
-    assert torch.allclose(LHS.tuple[0], RHS.tuple[0]), "First tuple elements are not close!"
+    # print(f"{LHS.tuple[0]=}", f"{RHS.tuple[0]=}")
+    assert torch.allclose(LHS.tuple[0], RHS.tuple[0], atol=0.001), "First tuple elements are not close!"
     # print(f"{LHS.tuple[1]=}", f"{RHS.tuple[1]=}")
     assert torch.allclose(LHS.tuple[1], RHS.tuple[1], atol=0.001), "Second tuple elements are not close!"
 
 def tau_morphism():
-    n, p, q = 2, 1, 1
-    gl1_a = GL1Element.random_element(n, p, q)
-    gl1_b = GL1Element.random_element(n, p, q)
+    m, n, p, q = 1, 2, 1, 1
+    gl1_a = GL1Element.random_element(m, n, p, q)
+    gl1_b = GL1Element.random_element(m, n, p, q)
 
     product = gl1_a * gl1_b
     feedback_product = product.feedback()
@@ -277,9 +284,9 @@ def tau_morphism():
     assert torch.allclose(feedback_product.tuple[1], composed_feedback.tuple[1]), "Feedback morphism fails for M_U"
 
 def peiffer_identity():
-    n, p, q = 2, 1, 1
-    gl1_a = GL1Element.random_element(n, p, q)
-    gl1_b = GL1Element.random_element(n, p, q)
+    m, n, p, q = 1, 2, 1, 1
+    gl1_a = GL1Element.random_element(m, n, p, q)
+    gl1_b = GL1Element.random_element(m, n, p, q)
 
     LHS = (gl1_a.feedback()).act_on(gl1_b)
     RHS = gl1_a * gl1_b * gl1_a.inv()

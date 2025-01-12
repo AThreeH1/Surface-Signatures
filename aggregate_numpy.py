@@ -22,7 +22,6 @@ def horizontal_first_aggregate(Image, a=None, b=None):
         b = Image.cols
 
     Aggregate_horizontal = GridOf2Cells(a, 1)
-    temp_value = Aggregate_horizontal[a - 1, 0]
     # print('XXX temp_value=', temp_value, type(temp_value))
 
     for i in range(a):
@@ -114,8 +113,8 @@ if __name__ == "__main__":
     for i in range(Image.rows):
         for j in range(Image.cols):
             Image[i,j].validate()
-    assert np.allclose( Image[0,0].horizontal_compose_with( Image[1,0] ).horizontal_compose_with( Image[2,0] ).value.matrix, 
-                        Image[0,0].horizontal_compose_with( Image[1,0].horizontal_compose_with( Image[2,0] ) ).value.matrix )
+    assert np.allclose( Image[0,0].horizontal_compose_with(Image[0,1]).horizontal_compose_with( Image[0,2]).value.matrix, 
+                        Image[0,0].horizontal_compose_with(Image[0,1].horizontal_compose_with( Image[0,2])).value.matrix )
 
 # TODO sanity checks (order doesn't matter)
 # TODO image to image
