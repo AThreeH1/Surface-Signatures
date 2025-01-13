@@ -1,4 +1,5 @@
 from imports import *
+device = "cuda" if torch.cuda.is_available() else "cpu"
 
 class GL0Element:
     def __init__(self, m, n, p, q, M_V=None, M_U=None):
@@ -13,8 +14,8 @@ class GL0Element:
         if M_U is None:
             M_U = torch.eye(n + q, dtype=torch.int32).repeat(m, 1, 1)
 
-        self.M_V = M_V
-        self.M_U = M_U
+        self.M_V = M_V.to(device)
+        self.M_U = M_U.to(device)
         self.tuple = (M_V, M_U)
 
     def almost_equal(self, other):
@@ -68,8 +69,8 @@ class GL0Element:
             raise ValueError("At least one of the M_U matrices is not invertible.")
 
         # Perform batch matrix multiplication
-        M_U_inv = torch.linalg.inv(self.M_U)  
-        Action = torch.bmm(torch.bmm(self.M_V, h.matrix), M_U_inv)
+        M_U_inv = torch.linalg.inv(self.M_U.to(device))  
+        Action = torch.bmm(torch.bmm(self.M_V.to(device), h.matrix.to(device)), M_U_inv)
 
         return GL1Element(self.m, self.n, self.p, self.q, Action)
 
@@ -105,12 +106,12 @@ class GL0Element:
 
 
         # Extract top and bottom rows for feedback
-        P = M_V[:, :n, :n] - torch.eye(n).repeat(m, 1, 1)
-        B = M_U[:, :n, n:]
-        R = M_V[:, n:, :n]
+        P = M_V[:, :n, :n] - torch.eye(n).repeat(m, 1, 1).to(device)
+        B = M_U[:, :n, n:].to(device)
+        R = M_V[:, n:, :n].to(device)
 
-        top_row = torch.cat((P, B), dim=2)
-        bottom_row = torch.cat((R, N), dim=2)
+        top_row = torch.cat((P.to(device), B), dim=2).to(device)
+        bottom_row = torch.cat((R, N.to(device)), dim=2).to(device)
 
         result_matrix = torch.cat((top_row, bottom_row), dim=1)
 
@@ -127,9 +128,9 @@ class GL1Element:
         self.q = q
 
         if matrix is None:
-            self.matrix = torch.eye(n + p, n + q, dtype=torch.int32).unsqueeze(0).repeat(m, 1, 1)
+            self.matrix = torch.eye(n + p, n + q, dtype=torch.int32).unsqueeze(0).repeat(m, 1, 1).to(device)
         else:
-            self.matrix = matrix
+            self.matrix = matrix.to(device)
 
         # Validate dimensions
         self.validate()
@@ -147,15 +148,15 @@ class GL1Element:
         matrix1 = self.matrix
 
         # Extract submatrices and compute inverses
-        P = matrix1[:, :n, :n] + torch.eye(n).unsqueeze(0).expand(m, -1, -1)
-        B = matrix1[:, :n, n:]
-        R = matrix1[:, n:, :n]
-        N = matrix1[:, n:, n:]
+        P = matrix1[:, :n, :n].to(device) + torch.eye(n).unsqueeze(0).expand(m, -1, -1).to(device)
+        B = matrix1[:, :n, n:].to(device)
+        R = matrix1[:, n:, :n].to(device)
+        N = matrix1[:, n:, n:].to(device)
 
         P_inv = torch.linalg.inv(P)
 
-        P_new = -(P - torch.eye(n).unsqueeze(0).expand(m, -1, -1)) @ P_inv
-        B_new = (P - torch.eye(n).unsqueeze(0).expand(m, -1, -1)) @ P_inv @ B - B
+        P_new = -(P - torch.eye(n).unsqueeze(0).expand(m, -1, -1).to(device)) @ P_inv
+        B_new = (P - torch.eye(n).unsqueeze(0).expand(m, -1, -1).to(device)) @ P_inv @ B - B
         R_new = -R @ P_inv
         N_new = R @ P_inv @ B - N
 
@@ -179,18 +180,18 @@ class GL1Element:
         matrix2 = self.matrix
 
         # Extract submatrices for batch operations
-        P1 = matrix1[:, :self.n, :self.n] + torch.eye(self.n, dtype=matrix1.dtype).unsqueeze(0).expand(self.m, -1, -1)
-        B1 = matrix1[:, :self.n, self.n:]
-        R1 = matrix1[:, self.n:, :self.n]
-        N1 = matrix1[:, self.n:, self.n:]
+        P1 = matrix1[:, :self.n, :self.n] + torch.eye(self.n, dtype=matrix1.dtype).unsqueeze(0).expand(self.m, -1, -1).to(device)
+        B1 = matrix1[:, :self.n, self.n:].to(device)
+        R1 = matrix1[:, self.n:, :self.n].to(device)
+        N1 = matrix1[:, self.n:, self.n:].to(device)
 
-        P2 = matrix2[:, :self.n, :self.n] + torch.eye(self.n, dtype=matrix2.dtype).unsqueeze(0).expand(self.m, -1, -1)
-        B2 = matrix2[:, :self.n, self.n:]
-        R2 = matrix2[:, self.n:, :self.n]
-        N2 = matrix2[:, self.n:, self.n:]
+        P2 = matrix2[:, :self.n, :self.n] + torch.eye(self.n, dtype=matrix2.dtype).unsqueeze(0).expand(self.m, -1, -1).to(device)
+        B2 = matrix2[:, :self.n, self.n:].to(device)
+        R2 = matrix2[:, self.n:, :self.n].to(device)
+        N2 = matrix2[:, self.n:, self.n:].to(device)
 
         # Perform block-wise multiplication
-        new_P = P2 @ P1 - torch.eye(self.n).unsqueeze(0).expand(self.m, -1, -1)  # P'P - I_n
+        new_P = P2 @ P1 - torch.eye(self.n).unsqueeze(0).expand(self.m, -1, -1).to(device)  # P'P - I_n
         new_B = P2 @ B1 + B2  # P'B + B'
         new_R = R2 @ P1 + R1  # R'P + R
         new_N = R2 @ B1 + N1 + N2  # R'B + N + N'
@@ -210,18 +211,18 @@ class GL1Element:
         M_U = torch.zeros((self.m, self.n + self.q, self.n + self.q))
 
         # Top-left block of M_V
-        M_V[:, :self.n, :self.n] = self.matrix[:, :self.n, :self.n] + torch.eye(self.n).unsqueeze(0).expand(self.m, -1, -1)
+        M_V[:, :self.n, :self.n] = self.matrix[:, :self.n, :self.n] + torch.eye(self.n).unsqueeze(0).expand(self.m, -1, -1).to(device)
 
         # Bottom-left block of M_V
-        M_V[:, self.n:, :self.n] = self.matrix[:, self.n:, :self.n]
-        M_V[:, self.n:, self.n:] = torch.eye(self.p).unsqueeze(0).expand(self.m, -1, -1)
+        M_V[:, self.n:, :self.n] = self.matrix[:, self.n:, :self.n].to(device)
+        M_V[:, self.n:, self.n:] = torch.eye(self.p).unsqueeze(0).expand(self.m, -1, -1).to(device)
 
         # Top-left block of M_U
-        M_U[:, :self.n, :self.n] = self.matrix[:, :self.n, :self.n] + torch.eye(self.n).unsqueeze(0).expand(self.m, -1, -1)
-        M_U[:, :self.n, self.n:] = self.matrix[:, :self.n, self.n:]
+        M_U[:, :self.n, :self.n] = self.matrix[:, :self.n, :self.n] + torch.eye(self.n).unsqueeze(0).expand(self.m, -1, -1).to(device)
+        M_U[:, :self.n, self.n:] = self.matrix[:, :self.n, self.n:].to(device)
 
         # Bottom-left block of M_U
-        M_U[:, self.n:, self.n:] = torch.eye(self.q).unsqueeze(0).expand(self.m, -1, -1)
+        M_U[:, self.n:, self.n:] = torch.eye(self.q).unsqueeze(0).expand(self.m, -1, -1).to(device)
 
         return GL0Element(self.m, self.n, self.p, self.q, M_V, M_U)
 
@@ -231,12 +232,12 @@ class GL1Element:
         Generate a random GL1Element for a batch of m elements.
         """
         # Generate random invertible n x n block
-        top_left = torch.eye(n).unsqueeze(0).repeat(m, 1, 1) + torch.randint(1, 10, (m, n, n))
+        top_left = torch.eye(n).unsqueeze(0).repeat(m, 1, 1) + torch.randint(1, 10, (m, n, n)).to(device)
 
         # Generate random blocks for the rest of the matrix
-        top_right = torch.randint(0, 10, (m, n, q))  # Top-right block
-        bottom_left = torch.randint(0, 10, (m, p, n))  # Bottom-left block
-        bottom_right = torch.randint(0, 10, (m, p, q))  # Bottom-right block
+        top_right = torch.randint(0, 10, (m, n, q)).to(device)  # Top-right block
+        bottom_left = torch.randint(0, 10, (m, p, n)).to(device)  # Bottom-left block
+        bottom_right = torch.randint(0, 10, (m, p, q)).to(device)  # Bottom-right block
 
         # Construct the full matrix
         top = torch.cat((top_left, top_right), dim=2)  # Concatenate along columns
