@@ -11,6 +11,8 @@ from pytorch_lightning import LightningModule, LightningDataModule
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger
 import torchmetrics
+import wandb
+from pytorch_lightning.loggers import WandbLogger
 
 
 

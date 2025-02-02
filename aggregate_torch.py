@@ -1,8 +1,18 @@
 from imports import *
 from gl0_and_gl1_torch import GL0Element, GL1Element
-from custom_matrix_torch import TwoCell, GridOf2Cells, mapping
+from custom_matrix_torch import TwoCell, GridOf2Cells, to_custom_matrix
 
+device = "cuda" if torch.cuda.is_available() else "cpu"
 
+# TODO
+# - [x]start overleaf and describe the 'lifting' procedure (from_...) for general shapes
+
+# - just time-benchmark horizontal_first_aggregate
+#    - [x] eager
+#    - [x] torch.compile
+#    - [ ] associative scan
+
+@torch.compile
 def horizontal_first_aggregate(ImageBatch, a=None, b=None):
     """
     Computes the horizontal-first aggregate for a batch of images.
@@ -36,6 +46,7 @@ def horizontal_first_aggregate(ImageBatch, a=None, b=None):
     Aggregate[0, 0] = temp_value.clone()
     return Aggregate
 
+@torch.compile
 def vertical_first_aggregate(ImageBatch, a=None, b=None):
     """
     Computes the vertical-first aggregate for a batch of images.
@@ -75,11 +86,30 @@ if __name__ == "__main__":
     batch_size = 2  # Specify the batch size for testing
     torch.manual_seed(42)
     
+    def from_vector(m, Xt, Xs):
+        n, p, q = 2, 1, 1
+        fV = torch.eye(n + p).repeat(m, 1, 1)
+        fU = torch.eye(n + q).repeat(m, 1, 1)
+        dX = Xs - Xt
+
+        fV[:, 0, 0] = fU[:, 0, 0] = torch.exp(dX)
+        fV[:, 1, 1] = fU[:, 1, 1] = torch.exp(dX ** 2)
+        fV[:, 2, 0] = torch.sin(dX)
+        fV[:, 2, 1] = dX ** 5
+        fU[:, 0, 2] = dX ** 3
+        fU[:, 1, 2] = 7 * dX
+ 
+        return GL0Element(m, n, p, q, fV, fU)
+
+
+    def kernel_gl1(p1, p2, p3, p4):
+        return (p1+p3-p2-p4).unsqueeze(-1).unsqueeze(-1)
+
     # Generate a batch of random images
     images = torch.rand(batch_size, m, m)
     
     # Map the batch of images
-    Images = mapping(images)  # Assuming mapping is batch-compatible
+    Images = to_custom_matrix(images, from_vector, kernel_gl1)  # Assuming to_custom_matrix is batch-compatible
     
     # Compute horizontal-first aggregate for the batch
     Aggregate_1 = horizontal_first_aggregate(Images)
@@ -122,7 +152,7 @@ if __name__ == "__main__":
     
     # Validation for another image
     images = torch.rand(batch_size, 5, 5)
-    Images = mapping(images)
+    Images = to_custom_matrix(images, from_vector, kernel_gl1)
     for i in range(Images.rows):
         for j in range(Images.cols):
             Images[i, j].validate()  # Validate all cells in the batch
