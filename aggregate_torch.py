@@ -31,19 +31,56 @@ def horizontal_first_aggregate(ImageBatch, a=None, b=None):
 
     Aggregate_horizontal = GridOf2Cells(batch_size, a, 1)
 
+    # for i in range(a):
+    #     Aggregate_temp = ImageBatch[i, 0]
+    #     for j in range(1, b):
+    #         Aggregate_temp = Aggregate_temp.horizontal_compose_with(ImageBatch[i, j])
+    #     Aggregate_horizontal[i, 0] = Aggregate_temp.clone()
+
     for i in range(a):
-        Aggregate_temp = ImageBatch[i, 0]
-        for j in range(1, b):
-            Aggregate_temp = Aggregate_temp.horizontal_compose_with(ImageBatch[i, j])
-        Aggregate_horizontal[i, 0] = Aggregate_temp.clone()
+        temp_h = [ImageBatch[i, j] for j in range(b)]
+        
+        while len(temp_h) > 1:
+            temp = []
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                futures = [executor.submit(lambda a, b: getattr(a, "horizontal_compose_with")(b), temp_h[i], temp_h[i+1]) 
+                for i in range(0, len(temp_h)-1, 2)]
+
+                for future in concurrent.futures.as_completed(futures):
+                    temp.append(future.result()) 
+
+            if len(temp_h) % 2 == 1:
+                temp.append(temp_h[-1])
+
+            temp_h = temp
+
+        Aggregate_horizontal[i, 0] = temp_h[0].clone()
 
     Aggregate = GridOf2Cells(batch_size, 1, 1)
-    temp_value = Aggregate_horizontal[a - 1, 0]
+    
+    # temp_value = Aggregate_horizontal[a - 1, 0]
 
-    for i in range(1, a):
-        temp_value = temp_value.vertical_compose_with(Aggregate_horizontal[a - (i + 1), 0])
+    # for i in range(1, a):
+    #     temp_value = temp_value.vertical_compose_with(Aggregate_horizontal[a - (i + 1), 0])
 
-    Aggregate[0, 0] = temp_value.clone()
+    temp_v = [Aggregate_horizontal[i, 0] for i in range(a-1, -1, -1)]
+        
+    while len(temp_v) > 1:
+        temp = []
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            futures = [executor.submit(lambda a, b: getattr(a, "vertical_compose_with")(b), temp_v[i], temp_v[i+1]) 
+            for i in range(0, len(temp_v)-1, 2)]
+
+            for future in concurrent.futures.as_completed(futures):
+                temp.append(future.result()) 
+
+        if len(temp_v) % 2 == 1:
+            temp.append(temp_v[-1])
+
+        temp_v = temp
+
+    Aggregate[0, 0] = temp_v[0].clone()
+
     return Aggregate
 
 @torch.compile

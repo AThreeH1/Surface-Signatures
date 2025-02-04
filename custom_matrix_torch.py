@@ -19,7 +19,7 @@ class TwoCell:
         """
         Validates the consistency condition for each TwoCell in the batch.
         """
-        print(f"{(self.value.feedback().tuple[0]).device=}")
+        # print(f"{(self.value.feedback().tuple[0]).device=}")
         assert torch.allclose(
             (self.down * self.right * self.up.inv() * self.left.inv()).tuple[0],
             self.value.feedback().tuple[0],
@@ -115,27 +115,31 @@ def to_custom_matrix(image, from_vector, kernel_gl1):
     """
 
     batch_size, m, n = image.shape
+    # print("B")
     gl0 = GL0Element(batch_size, 2, 1, 1)
+    # print("C")
     Map = GridOf2Cells(batch_size, m - 1, n - 1)
-    
+    # print("D")
     for i in range(m - 1):
+        # print("A")
         for j in range(n - 1):
+            # print("P")
 
             if i == 0: 
-                pu = from_vector(batch_size, image[:, i, j], image[:, i, j + 1])
+                pu = gl0.from_vector(batch_size, image[:, i, j], image[:, i, j + 1])
             else:
                 pu = Map[i-1, j].down
 
             if j == 0:
-                pl = from_vector(batch_size, image[:, i + 1, j], image[:, i, j])
+                pl = gl0.from_vector(batch_size, image[:, i + 1, j], image[:, i, j])
             else:
                 pl = Map[i, j-1].right
 
             # Create batched GL0 elements
             # pu = from_vector(batch_size, image[:, i, j], image[:, i, j + 1])
-            pd = from_vector(batch_size, image[:, i + 1, j], image[:, i + 1, j + 1])
+            pd = gl0.from_vector(batch_size, image[:, i + 1, j], image[:, i + 1, j + 1])
             # pl = from_vector(batch_size, image[:, i + 1, j], image[:, i, j])
-            pr = from_vector(batch_size, image[:, i + 1, j + 1], image[:, i, j + 1])
+            pr = gl0.from_vector(batch_size, image[:, i + 1, j + 1], image[:, i, j + 1])
 
             # Assign to grid
             Map[i, j].left = pl
@@ -151,7 +155,7 @@ def to_custom_matrix(image, from_vector, kernel_gl1):
             p2 = image[:, i + 1, j]
             p3 = image[:, i + 1, j + 1] 
             p4 = image[:, i, j + 1]
-            N = kernel_gl1(p1, p2, p3, p4) # Shape (batch_size, 1, 1)
+            N = gl0.kernel_gl1(p1, p2, p3, p4) # Shape (batch_size, 1, 1)
 
             # Create GL1 elements in batch
             GL1 = gl0.reverse_feedback(Edges_mul, N)

@@ -101,6 +101,26 @@ class GL0Element:
 
         return GL1Element(m, n, p, q, result_matrix)
 
+    @staticmethod
+    def from_vector(m, Xt, Xs):
+        n, p, q = 2, 1, 1
+        fV = torch.eye(n + p).repeat(m, 1, 1)
+        fU = torch.eye(n + q).repeat(m, 1, 1)
+        dX = Xs - Xt
+
+        fV[:, 0, 0] = fU[:, 0, 0] = torch.exp(dX)
+        fV[:, 1, 1] = fU[:, 1, 1] = torch.exp(dX ** 2)
+        fV[:, 2, 0] = torch.sin(dX)
+        fV[:, 2, 1] = dX ** 5
+        fU[:, 0, 2] = dX ** 3
+        fU[:, 1, 2] = 7 * dX
+ 
+        return GL0Element(m, n, p, q, fV, fU)
+
+    @staticmethod
+    def kernel_gl1(p1, p2, p3, p4):
+        return (p1+p3-p2-p4).unsqueeze(-1).unsqueeze(-1)
+
 class GL1Element:
     def __init__(self, m, n, p, q, matrix=None):
         """
