@@ -115,15 +115,15 @@ def to_custom_matrix(image, from_vector, kernel_gl1):
     """
 
     batch_size, m, n = image.shape
-    # print("B")
+    print("B")
     gl0 = GL0Element(batch_size, 2, 1, 1)
-    # print("C")
+    print("C")
     Map = GridOf2Cells(batch_size, m - 1, n - 1)
-    # print("D")
+    print("D")
     for i in range(m - 1):
-        # print("A")
+        print("A")
         for j in range(n - 1):
-            # print("P")
+            print("P")
 
             if i == 0: 
                 pu = gl0.from_vector(batch_size, image[:, i, j], image[:, i, j + 1])
