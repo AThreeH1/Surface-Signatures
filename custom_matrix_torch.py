@@ -44,295 +44,321 @@ class TwoCell:
             down=self.down
         )
 
-    @staticmethod
-    def horizontal_compose_with(list1, list2):
+    def horizontal_compose_with(self, other):
         """
         Horizontally composes the current TwoCell batch with another, assuming batched operations.
         """
-        temp_value1 = torch.cat([obj.value.matrix for obj in list1], dim=0)
-        m = temp_value1.size(0)
-        n = 0
-        p = temp_value1.size(1)
-        q = temp_value1.size(2)
-        value1 = GL1Element(m, n, p, q, temp_value1)
+        assert self.right.almost_equal(other.left), "Horizontal composition failed: `right` and `left` mismatch."
+        value = (self.down.act_on(other.value)) * self.value
+        left = self.left
+        right = other.right
+        up = self.up * other.up
+        down = self.down * other.down
 
-        temp_value2 = torch.cat([obj.value.matrix for obj in list2], dim=0)
-        m = temp_value2.size(0)
-        n = 0
-        p = temp_value2.size(1)
-        q = temp_value2.size(2)
-        value2 = GL1Element(m, n, p, q, temp_value2)
+        return TwoCell(value, left, right, up, down)  
 
-        tensor1_list = []
-        tensor2_list = []
+    # @staticmethod
+    # def horizontal_compose_with(list1, list2):
+    #     """
+    #     Horizontally composes the current TwoCell batch with another, assuming batched operations.
+    #     """
+        # temp_value1 = torch.cat([obj.value.matrix for obj in list1], dim=0)
+        # m = temp_value1.size(0)
+        # n = 0
+        # p = temp_value1.size(1)
+        # q = temp_value1.size(2)
+        # value1 = GL1Element(m, n, p, q, temp_value1)
 
-        for obj in list1:
-            tensor1, tensor2 = obj.down.tuple
-            tensor1_list.append(tensor1)
-            tensor2_list.append(tensor2)
+        # temp_value2 = torch.cat([obj.value.matrix for obj in list2], dim=0)
+        # m = temp_value2.size(0)
+        # n = 0
+        # p = temp_value2.size(1)
+        # q = temp_value2.size(2)
+        # value2 = GL1Element(m, n, p, q, temp_value2)
 
-        tensor1_stack = torch.stack(tensor1_list, dim=0).squeeze(0) 
-        tensor2_stack = torch.stack(tensor2_list, dim=0).squeeze(0) 
+        # tensor1_list = []
+        # tensor2_list = []
 
-        down1 = GL0Element(m, n, p, q, tensor1_stack, tensor2_stack)
+        # for obj in list1:
+        #     tensor1, tensor2 = obj.down.tuple
+        #     tensor1_list.append(tensor1)
+        #     tensor2_list.append(tensor2)
 
-        tensor1_list = []
-        tensor2_list = []
+        # tensor1_stack = torch.stack(tensor1_list, dim=0).squeeze(0) 
+        # tensor2_stack = torch.stack(tensor2_list, dim=0).squeeze(0) 
 
-        for obj in list2:
-            tensor1, tensor2 = obj.down.tuple
-            tensor1_list.append(tensor1)
-            tensor2_list.append(tensor2)
+        # down1 = GL0Element(m, n, p, q, tensor1_stack, tensor2_stack)
 
-        tensor1_stack = torch.stack(tensor1_list, dim=0).squeeze(0) 
-        tensor2_stack = torch.stack(tensor2_list, dim=0).squeeze(0)   
+        # tensor1_list = []
+        # tensor2_list = []
 
-        down2 = GL0Element(m, n, p, q, tensor1_stack, tensor2_stack)
+        # for obj in list2:
+        #     tensor1, tensor2 = obj.down.tuple
+        #     tensor1_list.append(tensor1)
+        #     tensor2_list.append(tensor2)
 
-        tensor1_list = []
-        tensor2_list = []
+        # tensor1_stack = torch.stack(tensor1_list, dim=0).squeeze(0) 
+        # tensor2_stack = torch.stack(tensor2_list, dim=0).squeeze(0)   
 
-        for obj in list1:
-            tensor1, tensor2 = obj.left.tuple
-            tensor1_list.append(tensor1)
-            tensor2_list.append(tensor2)
+        # down2 = GL0Element(m, n, p, q, tensor1_stack, tensor2_stack)
 
-        tensor1_stack = torch.stack(tensor1_list, dim=0).squeeze(0)  
-        tensor2_stack = torch.stack(tensor2_list, dim=0).squeeze(0)   
+        # tensor1_list = []
+        # tensor2_list = []
 
-        left1 = GL0Element(m, n, p, q, tensor1_stack, tensor2_stack)
+        # for obj in list1:
+        #     tensor1, tensor2 = obj.left.tuple
+        #     tensor1_list.append(tensor1)
+        #     tensor2_list.append(tensor2)
 
-        tensor1_list = []
-        tensor2_list = []
+        # tensor1_stack = torch.stack(tensor1_list, dim=0).squeeze(0)  
+        # tensor2_stack = torch.stack(tensor2_list, dim=0).squeeze(0)   
 
-        for obj in list2:
-            tensor1, tensor2 = obj.left.tuple
-            tensor1_list.append(tensor1)
-            tensor2_list.append(tensor2)
+        # left1 = GL0Element(m, n, p, q, tensor1_stack, tensor2_stack)
 
-        tensor1_stack = torch.stack(tensor1_list, dim=0).squeeze(0)  
-        tensor2_stack = torch.stack(tensor2_list, dim=0).squeeze(0)   
+        # tensor1_list = []
+        # tensor2_list = []
 
-        left2 = GL0Element(m, n, p, q, tensor1_stack, tensor2_stack)
+        # for obj in list2:
+        #     tensor1, tensor2 = obj.left.tuple
+        #     tensor1_list.append(tensor1)
+        #     tensor2_list.append(tensor2)
 
-        tensor1_list = []
-        tensor2_list = []
+        # tensor1_stack = torch.stack(tensor1_list, dim=0).squeeze(0)  
+        # tensor2_stack = torch.stack(tensor2_list, dim=0).squeeze(0)   
+
+        # left2 = GL0Element(m, n, p, q, tensor1_stack, tensor2_stack)
+
+        # tensor1_list = []
+        # tensor2_list = []
         
-        for obj in list1:
-            tensor1, tensor2 = obj.right.tuple
-            tensor1_list.append(tensor1)
-            tensor2_list.append(tensor2)
+        # for obj in list1:
+        #     tensor1, tensor2 = obj.right.tuple
+        #     tensor1_list.append(tensor1)
+        #     tensor2_list.append(tensor2)
 
-        tensor1_stack = torch.stack(tensor1_list, dim=0).squeeze(0)  
-        tensor2_stack = torch.stack(tensor2_list, dim=0).squeeze(0)   
+        # tensor1_stack = torch.stack(tensor1_list, dim=0).squeeze(0)  
+        # tensor2_stack = torch.stack(tensor2_list, dim=0).squeeze(0)   
 
-        right1 = GL0Element(m, n, p, q, tensor1_stack, tensor2_stack)
+        # right1 = GL0Element(m, n, p, q, tensor1_stack, tensor2_stack)
 
-        tensor1_list = []
-        tensor2_list = []
+        # tensor1_list = []
+        # tensor2_list = []
 
-        for obj in list2:
-            tensor1, tensor2 = obj.right.tuple
-            tensor1_list.append(tensor1)
-            tensor2_list.append(tensor2)
+        # for obj in list2:
+        #     tensor1, tensor2 = obj.right.tuple
+        #     tensor1_list.append(tensor1)
+        #     tensor2_list.append(tensor2)
 
-        tensor1_stack = torch.stack(tensor1_list, dim=0).squeeze(0)  
-        tensor2_stack = torch.stack(tensor2_list, dim=0).squeeze(0)   
+        # tensor1_stack = torch.stack(tensor1_list, dim=0).squeeze(0)  
+        # tensor2_stack = torch.stack(tensor2_list, dim=0).squeeze(0)   
 
-        right2 = GL0Element(m, n, p, q, tensor1_stack, tensor2_stack)
+        # right2 = GL0Element(m, n, p, q, tensor1_stack, tensor2_stack)
 
-        tensor1_list = []
-        tensor2_list = []
+        # tensor1_list = []
+        # tensor2_list = []
 
-        for obj in list1:
-            tensor1, tensor2 = obj.up.tuple
-            tensor1_list.append(tensor1)
-            tensor2_list.append(tensor2)
+        # for obj in list1:
+        #     tensor1, tensor2 = obj.up.tuple
+        #     tensor1_list.append(tensor1)
+        #     tensor2_list.append(tensor2)
 
-        tensor1_stack = torch.stack(tensor1_list, dim=0).squeeze(0)  
-        tensor2_stack = torch.stack(tensor2_list, dim=0).squeeze(0)   
+        # tensor1_stack = torch.stack(tensor1_list, dim=0).squeeze(0)  
+        # tensor2_stack = torch.stack(tensor2_list, dim=0).squeeze(0)   
 
-        up1 = GL0Element(m, n, p, q, tensor1_stack, tensor2_stack)
+        # up1 = GL0Element(m, n, p, q, tensor1_stack, tensor2_stack)
 
-        tensor1_list = []
-        tensor2_list = []
+        # tensor1_list = []
+        # tensor2_list = []
 
-        for obj in list2:
-            tensor1, tensor2 = obj.up.tuple
-            tensor1_list.append(tensor1)
-            tensor2_list.append(tensor2)
+        # for obj in list2:
+        #     tensor1, tensor2 = obj.up.tuple
+        #     tensor1_list.append(tensor1)
+        #     tensor2_list.append(tensor2)
 
-        tensor1_stack = torch.stack(tensor1_list, dim=0).squeeze(0)  
-        tensor2_stack = torch.stack(tensor2_list, dim=0).squeeze(0)   
+        # tensor1_stack = torch.stack(tensor1_list, dim=0).squeeze(0)  
+        # tensor2_stack = torch.stack(tensor2_list, dim=0).squeeze(0)   
 
-        up2 = GL0Element(m, n, p, q, tensor1_stack, tensor2_stack)
-        print(f"{left2.tuple[0].size()=}", f"{right1.tuple[0].size()=}")
-        assert right1.almost_equal(left2), "Horizontal composition failed: `right` and `left` mismatch."
-        value = (down1.act_on(value2)) * value1
-        left = left1
-        right = right2
-        up = up1 * up2
-        down = down1 * down2
+        # up2 = GL0Element(m, n, p, q, tensor1_stack, tensor2_stack)
+        # print(f"{left2.tuple[0].size()=}", f"{right1.tuple[0].size()=}")
+        # assert right1.almost_equal(left2), "Horizontal composition failed: `right` and `left` mismatch."
+        # value = (down1.act_on(value2)) * value1
+        # left = left1
+        # right = right2
+        # up = up1 * up2
+        # down = down1 * down2
 
-        two_cells_list = []
+        # two_cells_list = []
 
-        for i in range(m):
-            value_slice = GL1Element(1, n, p, q, value.matrix[i].unsqueeze(0))
-            right_slice = GL0Element(1, n, p, q, right.tuple[0][i], right.tuple[1][i])
-            left_slice = GL0Element(1, n, p, q, left.tuple[0][i], left.tuple[1][i])
-            up_slice = GL0Element(1, n, p, q, up.tuple[0][i], up.tuple[1][i])        
-            down_slice = GL0Element(1, n, p, q, down.tuple[0][i], down.tuple[1][i])    
+        # for i in range(m):
+        #     value_slice = GL1Element(1, n, p, q, value.matrix[i].unsqueeze(0))
+        #     right_slice = GL0Element(1, n, p, q, right.tuple[0][i], right.tuple[1][i])
+        #     left_slice = GL0Element(1, n, p, q, left.tuple[0][i], left.tuple[1][i])
+        #     up_slice = GL0Element(1, n, p, q, up.tuple[0][i], up.tuple[1][i])        
+        #     down_slice = GL0Element(1, n, p, q, down.tuple[0][i], down.tuple[1][i])    
             
-            # Create a TwoCell instance and append it to the list
-            two_cell_instance = TwoCell(value_slice, left_slice, right_slice, up_slice, down_slice)
-            two_cells_list.append(two_cell_instance)
+        #     # Create a TwoCell instance and append it to the list
+        #     two_cell_instance = TwoCell(value_slice, left_slice, right_slice, up_slice, down_slice)
+        #     two_cells_list.append(two_cell_instance)
 
-        return two_cells_list
+        # return two_cells_list
 
-    def vertical_compose_with(list1, list2):
+    def vertical_compose_with(self, other):
         """
         Vertically composes the current TwoCell batch with another, assuming batched operations.
         """
-        temp_value1 = torch.cat([obj.value.matrix for obj in list1], dim=0)
-        m = temp_value1.size(0)
-        n = 0
-        p = temp_value1.size(1)
-        q = temp_value1.size(2)
-        value1 = GL1Element(m, n, p, q, temp_value1)
+        assert self.up.almost_equal(other.down), "Vertical composition failed: `up` and `down` mismatch."
+        value = self.value * (self.left.act_on(other.value))
+        left = self.left * other.left
+        right = self.right * other.right
+        up = other.up
+        down = self.down
 
-        temp_value2 = torch.cat([obj.value.matrix for obj in list2], dim=0)
-        m = temp_value2.size(0)
-        n = 0
-        p = temp_value2.size(1)
-        q = temp_value2.size(2)
-        value2 = GL1Element(m, n, p, q, temp_value2)
+        return TwoCell(value, left, right, up, down)
 
-        tensor1_list = []
-        tensor2_list = []
+    # def vertical_compose_with(list1, list2):
+    #     """
+    #     Vertically composes the current TwoCell batch with another, assuming batched operations.
+    #     """
+        # temp_value1 = torch.cat([obj.value.matrix for obj in list1], dim=0)
+        # m = temp_value1.size(0)
+        # n = 0
+        # p = temp_value1.size(1)
+        # q = temp_value1.size(2)
+        # value1 = GL1Element(m, n, p, q, temp_value1)
 
-        for obj in list1:
-            tensor1, tensor2 = obj.down.tuple
-            tensor1_list.append(tensor1)
-            tensor2_list.append(tensor2)
+        # temp_value2 = torch.cat([obj.value.matrix for obj in list2], dim=0)
+        # m = temp_value2.size(0)
+        # n = 0
+        # p = temp_value2.size(1)
+        # q = temp_value2.size(2)
+        # value2 = GL1Element(m, n, p, q, temp_value2)
 
-        tensor1_stack = torch.stack(tensor1_list, dim=0).squeeze(0)  
-        tensor2_stack = torch.stack(tensor2_list, dim=0).squeeze(0)   
+        # tensor1_list = []
+        # tensor2_list = []
 
-        down1 = GL0Element(m, n, p, q, tensor1_stack, tensor2_stack)
+        # for obj in list1:
+        #     tensor1, tensor2 = obj.down.tuple
+        #     tensor1_list.append(tensor1)
+        #     tensor2_list.append(tensor2)
 
-        tensor1_list = []
-        tensor2_list = []
+        # tensor1_stack = torch.stack(tensor1_list, dim=0).squeeze(0)  
+        # tensor2_stack = torch.stack(tensor2_list, dim=0).squeeze(0)   
 
-        for obj in list2:
-            tensor1, tensor2 = obj.down.tuple
-            tensor1_list.append(tensor1)
-            tensor2_list.append(tensor2)
+        # down1 = GL0Element(m, n, p, q, tensor1_stack, tensor2_stack)
 
-        tensor1_stack = torch.stack(tensor1_list, dim=0).squeeze(0)  
-        tensor2_stack = torch.stack(tensor2_list, dim=0).squeeze(0)   
+        # tensor1_list = []
+        # tensor2_list = []
 
-        down2 = GL0Element(m, n, p, q, tensor1_stack, tensor2_stack)
+        # for obj in list2:
+        #     tensor1, tensor2 = obj.down.tuple
+        #     tensor1_list.append(tensor1)
+        #     tensor2_list.append(tensor2)
 
-        tensor1_list = []
-        tensor2_list = []
+        # tensor1_stack = torch.stack(tensor1_list, dim=0).squeeze(0)  
+        # tensor2_stack = torch.stack(tensor2_list, dim=0).squeeze(0)   
 
-        for obj in list1:
-            tensor1, tensor2 = obj.left.tuple
-            tensor1_list.append(tensor1)
-            tensor2_list.append(tensor2)
+        # down2 = GL0Element(m, n, p, q, tensor1_stack, tensor2_stack)
 
-        tensor1_stack = torch.stack(tensor1_list, dim=0).squeeze(0)  
-        tensor2_stack = torch.stack(tensor2_list, dim=0).squeeze(0)   
+        # tensor1_list = []
+        # tensor2_list = []
 
-        left1 = GL0Element(m, n, p, q, tensor1_stack, tensor2_stack)
+        # for obj in list1:
+        #     tensor1, tensor2 = obj.left.tuple
+        #     tensor1_list.append(tensor1)
+        #     tensor2_list.append(tensor2)
 
-        tensor1_list = []
-        tensor2_list = []
+        # tensor1_stack = torch.stack(tensor1_list, dim=0).squeeze(0)  
+        # tensor2_stack = torch.stack(tensor2_list, dim=0).squeeze(0)   
 
-        for obj in list2:
-            tensor1, tensor2 = obj.left.tuple
-            tensor1_list.append(tensor1)
-            tensor2_list.append(tensor2)
+        # left1 = GL0Element(m, n, p, q, tensor1_stack, tensor2_stack)
 
-        tensor1_stack = torch.stack(tensor1_list, dim=0).squeeze(0)  
-        tensor2_stack = torch.stack(tensor2_list, dim=0).squeeze(0)   
+        # tensor1_list = []
+        # tensor2_list = []
 
-        left2 = GL0Element(m, n, p, q, tensor1_stack, tensor2_stack)
+        # for obj in list2:
+        #     tensor1, tensor2 = obj.left.tuple
+        #     tensor1_list.append(tensor1)
+        #     tensor2_list.append(tensor2)
 
-        tensor1_list = []
-        tensor2_list = []
+        # tensor1_stack = torch.stack(tensor1_list, dim=0).squeeze(0)  
+        # tensor2_stack = torch.stack(tensor2_list, dim=0).squeeze(0)   
 
-        for obj in list1:
-            tensor1, tensor2 = obj.right.tuple
-            tensor1_list.append(tensor1)
-            tensor2_list.append(tensor2)
+        # left2 = GL0Element(m, n, p, q, tensor1_stack, tensor2_stack)
 
-        tensor1_stack = torch.stack(tensor1_list, dim=0).squeeze(0)  
-        tensor2_stack = torch.stack(tensor2_list, dim=0).squeeze(0)   
+        # tensor1_list = []
+        # tensor2_list = []
 
-        right1 = GL0Element(m, n, p, q, tensor1_stack, tensor2_stack)
+        # for obj in list1:
+        #     tensor1, tensor2 = obj.right.tuple
+        #     tensor1_list.append(tensor1)
+        #     tensor2_list.append(tensor2)
 
-        tensor1_list = []
-        tensor2_list = []
+        # tensor1_stack = torch.stack(tensor1_list, dim=0).squeeze(0)  
+        # tensor2_stack = torch.stack(tensor2_list, dim=0).squeeze(0)   
 
-        for obj in list2:
-            tensor1, tensor2 = obj.right.tuple
-            tensor1_list.append(tensor1)
-            tensor2_list.append(tensor2)
+        # right1 = GL0Element(m, n, p, q, tensor1_stack, tensor2_stack)
 
-        tensor1_stack = torch.stack(tensor1_list, dim=0).squeeze(0)  
-        tensor2_stack = torch.stack(tensor2_list, dim=0).squeeze(0)   
+        # tensor1_list = []
+        # tensor2_list = []
 
-        right2 = GL0Element(m, n, p, q, tensor1_stack, tensor2_stack)
+        # for obj in list2:
+        #     tensor1, tensor2 = obj.right.tuple
+        #     tensor1_list.append(tensor1)
+        #     tensor2_list.append(tensor2)
 
-        tensor1_list = []
-        tensor2_list = []
+        # tensor1_stack = torch.stack(tensor1_list, dim=0).squeeze(0)  
+        # tensor2_stack = torch.stack(tensor2_list, dim=0).squeeze(0)   
 
-        for obj in list1:
-            tensor1, tensor2 = obj.up.tuple
-            tensor1_list.append(tensor1)
-            tensor2_list.append(tensor2)
+        # right2 = GL0Element(m, n, p, q, tensor1_stack, tensor2_stack)
 
-        tensor1_stack = torch.stack(tensor1_list, dim=0).squeeze(0)  
-        tensor2_stack = torch.stack(tensor2_list, dim=0).squeeze(0)   
+        # tensor1_list = []
+        # tensor2_list = []
 
-        up1 = GL0Element(m, n, p, q, tensor1_stack, tensor2_stack)
+        # for obj in list1:
+        #     tensor1, tensor2 = obj.up.tuple
+        #     tensor1_list.append(tensor1)
+        #     tensor2_list.append(tensor2)
 
-        tensor1_list = []
-        tensor2_list = []
+        # tensor1_stack = torch.stack(tensor1_list, dim=0).squeeze(0)  
+        # tensor2_stack = torch.stack(tensor2_list, dim=0).squeeze(0)   
 
-        for obj in list2:
-            tensor1, tensor2 = obj.up.tuple
-            tensor1_list.append(tensor1)
-            tensor2_list.append(tensor2)
+        # up1 = GL0Element(m, n, p, q, tensor1_stack, tensor2_stack)
 
-        tensor1_stack = torch.stack(tensor1_list, dim=0).squeeze(0)  
-        tensor2_stack = torch.stack(tensor2_list, dim=0).squeeze(0)   
+        # tensor1_list = []
+        # tensor2_list = []
 
-        up2 = GL0Element(m, n, p, q, tensor1_stack, tensor2_stack)
+        # for obj in list2:
+        #     tensor1, tensor2 = obj.up.tuple
+        #     tensor1_list.append(tensor1)
+        #     tensor2_list.append(tensor2)
 
-        assert up1.almost_equal(down2), "Vertical composition failed: `up` and `down` mismatch."
+        # tensor1_stack = torch.stack(tensor1_list, dim=0).squeeze(0)  
+        # tensor2_stack = torch.stack(tensor2_list, dim=0).squeeze(0)   
 
-        value = value1 * (left1.act_on(value2))
-        left = left1 * left2
-        right = right1 * right2
-        up = up2
-        down = down1
+        # up2 = GL0Element(m, n, p, q, tensor1_stack, tensor2_stack)
 
-        two_cells_list = []
+        # assert up1.almost_equal(down2), "Vertical composition failed: `up` and `down` mismatch."
 
-        for i in range(m):
-            value_slice = GL1Element(m, n, p, q, value.matrix[i])
-            right_slice = GL0Element(m, n, p, q, right.tuple[0][i], right.tuple[1][i])
-            left_slice = GL0Element(m, n, p, q, left.tuple[0][i], left.tuple[1][i])
-            up_slice = GL0Element(m, n, p, q, up.tuple[0][i], up.tuple[1][i])        
-            down_slice = GL0Element(m, n, p, q, down.tuple[0][i], down.tuple[1][i])    
+        # value = value1 * (left1.act_on(value2))
+        # left = left1 * left2
+        # right = right1 * right2
+        # up = up2
+        # down = down1
+
+        # two_cells_list = []
+
+        # for i in range(m):
+        #     value_slice = GL1Element(m, n, p, q, value.matrix[i])
+        #     right_slice = GL0Element(m, n, p, q, right.tuple[0][i], right.tuple[1][i])
+        #     left_slice = GL0Element(m, n, p, q, left.tuple[0][i], left.tuple[1][i])
+        #     up_slice = GL0Element(m, n, p, q, up.tuple[0][i], up.tuple[1][i])        
+        #     down_slice = GL0Element(m, n, p, q, down.tuple[0][i], down.tuple[1][i])    
             
-            # Create a TwoCell instance and append it to the list
-            two_cell_instance = TwoCell(value_slice, left_slice, right_slice, up_slice, down_slice)
-            two_cells_list.append(two_cell_instance)
+        #     # Create a TwoCell instance and append it to the list
+        #     two_cell_instance = TwoCell(value_slice, left_slice, right_slice, up_slice, down_slice)
+        #     two_cells_list.append(two_cell_instance)
 
-        return two_cells_list
+        # return two_cells_list
 
     def __repr__(self):
         return (

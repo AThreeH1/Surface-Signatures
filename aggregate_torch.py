@@ -17,7 +17,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 # [x] TODO before and after torch compile
-# [ ]TODO figure out classes data for pytorch parallization
+# [x]TODO figure out classes data for pytorch parallization
 # [x] TODO overleaf describe Rf 
 # TODO Isolate every class and function and optimize 
 # TODO time stamp with eager and compile w/parallel scan 
@@ -42,61 +42,62 @@ def horizontal_first_aggregate(ImageBatch, a=None, b=None):
 
     Aggregate_horizontal = GridOf2Cells(batch_size, a, 1)
 
-# Old version
-    # for i in range(a):
-    #     Aggregate_temp = ImageBatch[i, 0]
-    #     for j in range(1, b):
-    #         Aggregate_temp = Aggregate_temp.horizontal_compose_with(ImageBatch[i, j])
-    #     Aggregate_horizontal[i, 0] = Aggregate_temp.clone()
-
+                # Loop
     for i in range(a):
+        Aggregate_temp = ImageBatch[i, 0]
+        for j in range(1, b):
+            Aggregate_temp = Aggregate_temp.horizontal_compose_with(ImageBatch[i, j])
+        Aggregate_horizontal[i, 0] = Aggregate_temp.clone()
 
-        result = [ImageBatch[i,j] for j in range(b)]
-        i = 0
-        # Tree reduction
-        while len(result) > 1:
-            n = len(result)
-            n_pairs = n // 2  
+                # Tree Reduction
+    # for i in range(a):
+    #     result = [ImageBatch[i,j] for j in range(b)]
+    #     i = 0
+    #     # Tree reduction
+    #     while len(result) > 1:
+    #         n = len(result)
+    #         n_pairs = n // 2  
           
-            list1 = result[:2 * n_pairs:2]
-            list2 = result[1:2 * n_pairs:2]
-            print(i)
-            new_result = TwoCell.horizontal_compose_with(list1, list2)
-            i += 1
-            # for odd elements
-            if n % 2:
-                new_result.append(result[-1])
+    #         list1 = result[:2 * n_pairs:2]
+    #         list2 = result[1:2 * n_pairs:2]
+    #         print(i)
+    #         new_result = TwoCell.horizontal_compose_with(list1, list2)
+    #         i += 1
+    #         # for odd elements
+    #         if n % 2:
+    #             new_result.append(result[-1])
             
-            result = new_result
+    #         result = new_result
         
-        Aggregate_horizontal[i, 0] = new_result[0].clone()
+    #     Aggregate_horizontal[i, 0] = new_result[0].clone()
 
     # To set final aggregate
     Aggregate = GridOf2Cells(batch_size, 1, 1)
-    
-    result_aggregate = [Aggregate_horizontal[i, 0] for i in range(a)]
 
-    # Old code
-    # temp_value = Aggregate_horizontal[a - 1, 0]
-    # for i in range(1, a):
-    #     temp_value = temp_value.vertical_compose_with(Aggregate_horizontal[a - (i + 1), 0])
-    
-    while len(result_aggregate) > 1:
-        n = len(result)
-        n_pairs = n // 2  
-        
-        list1 = result_aggregate[:2 * n_pairs:2]
-        list2 = result_aggregate[1:2 * n_pairs:2]
-        
-        new_result = TwoCell.vertical_compose_with(list1, list2)
-        
-        # for odd elements
-        if n % 2:
-            new_result.append(result[-1])
-        
-        result_aggregate = new_result
+                    # Loop
+    temp_value = Aggregate_horizontal[a - 1, 0]
+    for i in range(1, a):
+        temp_value = temp_value.vertical_compose_with(Aggregate_horizontal[a - (i + 1), 0])
+    Aggregate[0,0] = temp_value.clone()
 
-    Aggregate[0, 0] = result_aggregate[0].clone()
+                    # Tree reduction
+    # result_aggregate = [Aggregate_horizontal[i, 0] for i in range(a)]
+    # while len(result_aggregate) > 1:
+    #     n = len(result)
+    #     n_pairs = n // 2  
+        
+    #     list1 = result_aggregate[:2 * n_pairs:2]
+    #     list2 = result_aggregate[1:2 * n_pairs:2]
+        
+    #     new_result = TwoCell.vertical_compose_with(list1, list2)
+        
+    #     # for odd elements
+    #     if n % 2:
+    #         new_result.append(result[-1])
+        
+    #     result_aggregate = new_result
+
+    # Aggregate[0, 0] = result_aggregate[0].clone()
 
     return Aggregate
 
