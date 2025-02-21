@@ -23,7 +23,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 # TODO time stamp with eager and compile w/parallel scan 
 
 
-# @torch.compile
+@torch.compile
 def horizontal_first_aggregate(ImageBatch, a=None, b=None):
     """
     Computes the horizontal-first aggregate for a batch of images.
@@ -167,11 +167,17 @@ if __name__ == "__main__":
     Images = to_custom_matrix(images, from_vector, kernel_gl1)  # Assuming to_custom_matrix is batch-compatible
     
     # Compute horizontal-first aggregate for the batch
-    start_time = time.time()
-    Aggregate_1 = horizontal_first_aggregate(Images)
-    end_time = time.time()
-    elapsed_time = end_time - start_time
-    print(f"Execution Time: {elapsed_time} seconds")
+    Time = []
+    for i in range(100):
+        start_time = time.time()
+        Aggregate_1 = horizontal_first_aggregate(Images)
+        end_time = time.time()
+        elapsed_time = end_time - start_time
+        Time.append(elapsed_time)
+        print(f"Execution Time: {elapsed_time} seconds")
+
+    print((sum(Time)/100))
+    
 
     # print("Horizontal first aggregate (Batch):")
     # print(Aggregate_1[0, 0].value.matrix)

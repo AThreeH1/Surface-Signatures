@@ -194,7 +194,7 @@ class GL1Element:
         R2 = matrix2[:, self.n:, :self.n].to(device)
         N2 = matrix2[:, self.n:, self.n:].to(device)
 
-        # Perform block-wise multiplication
+        # Perform bach-wise multiplication
         new_P = P2 @ P1 - torch.eye(self.n).unsqueeze(0).expand(self.m, -1, -1).to(device)  # P'P - I_n
         new_B = P2 @ B1 + B2  # P'B + B'
         new_R = R2 @ P1 + R1  # R'P + R

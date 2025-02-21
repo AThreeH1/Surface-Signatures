@@ -344,7 +344,8 @@ class TwoCell:
         # right = right1 * right2
         # up = up2
         # down = down1
-
+        # Tensors of size A_1*B_1*C_1 and A_2*B_2*C_2 for matrix mul (A_1 = A_2, C_1 = B2), in parallel all A_1 matrices simultanously 
+        # but if tensors of size M_1*A_1*B_1*C_1 and M_1*A_1*B_2*C_2 for matrix mul of last 2 dims (A_1 = A_2, C_1 = B2),  M_1*A_1 
         # two_cells_list = []
 
         # for i in range(m):
@@ -392,7 +393,7 @@ class GridOf2Cells:
         as_string = [",".join([repr(v) for v in row]) for row in self.matrix]
         return f"GridOf2Cells(rows={self.rows}, cols={self.cols}, batch_size={self.batch_size}, matrix={as_string})"
 
-# @torch.compile
+@torch.compile
 def to_custom_matrix(image, from_vector, kernel_gl1):
     """
     Maps elements from a batched image to the custom batched matrix structure.
