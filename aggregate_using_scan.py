@@ -6,7 +6,7 @@ def from_vector(n, p, q, m, Xt, Xs):
 
     fV = torch.eye(n + p).repeat(m, 1, 1)
     fU = torch.eye(n + q).repeat(m, 1, 1)
-    dX = Xs - Xt
+    dX = (Xs - Xt).to(device)
 
     fV[:, 0, 0] = fU[:, 0, 0] = torch.exp(dX)
     fV[:, 1, 1] = fU[:, 1, 1] = torch.exp(dX ** 2)
@@ -15,18 +15,17 @@ def from_vector(n, p, q, m, Xt, Xs):
     fU[:, 0, 2] = dX ** 3
     fU[:, 1, 2] = 7 * dX
 
-    return (fV, fU)
-
+    return (fV.to(device), fU.to(device))
 
 def kernel_gl1(p1, p2, p3, p4):
-    return (p1+p3-p2-p4).unsqueeze(-1).unsqueeze(-1)
+    return (p1+p3-p2-p4).to(device).unsqueeze(-1).unsqueeze(-1)
 
 def reverse_feedback(n, tuple, N):
 
     M_V, M_U = tuple
     # Extract top and bottom rows for feedback
     rows, columns, m, _, _ = M_V.size()
-    P = M_V[:, :, :, :n, :n] - torch.eye(n).repeat(rows, columns, m, 1, 1).to(device)
+    P = M_V[:, :, :, :n, :n].to(device) - torch.eye(n).repeat(rows, columns, m, 1, 1).to(device)
     B = M_U[:, :, :, :n, n:].to(device)
     R = M_V[:, :, :, n:, :n].to(device)
 
@@ -37,7 +36,8 @@ def reverse_feedback(n, tuple, N):
 
     return result_matrix
 
-def to_dictionary(n, p, q, image, from_vector, kernel_gl1):
+@torch.compile
+def to_tuple(n, p, q, image, from_vector, kernel_gl1):
     """
     Maps elements from a batched image to the dictionary structure.
     Args:
@@ -58,16 +58,15 @@ def to_dictionary(n, p, q, image, from_vector, kernel_gl1):
     for i in range(columns - 1):
         for j in range(rows - 1):
 
-            if i == 0: 
+            if j == 0: 
                 up[j].append(from_vector(n, p, q,batch_size, image[:, i, j], image[:, i, j + 1]))
             else:
-                up[j].append(down[i-1][j])
+                up[j].append(down[j-1][i])
 
-            if j == 0:
+            if i == 0:
                 left[j].append(from_vector(n, p, q,batch_size, image[:, i + 1, j], image[:, i, j]))
             else:
-                print(i, j)
-                left[j].append(right[i][j-1])
+                left[j].append(right[j][i-1])
 
             down[j].append(from_vector(n, p, q,batch_size, image[:, i + 1, j], image[:, i + 1, j + 1]))
             right[j].append(from_vector(n, p, q,batch_size, image[:, i + 1, j + 1], image[:, i, j + 1]))
@@ -91,74 +90,70 @@ def to_dictionary(n, p, q, image, from_vector, kernel_gl1):
     right_tuple = tuple(torch.stack(tensors) for tensors in zip(*right_stacked))
 
     stacked_tensors = [torch.stack(tensors) for tensors in N]
-    N_tensor = torch.stack(stacked_tensors)
+    N_tensor = torch.stack(stacked_tensors).to(device)
 
     Edges_mul = (down_tuple[0] @ right_tuple[0] @ torch.linalg.inv(up_tuple[0]) @ torch.linalg.inv(left_tuple[0]),
                     down_tuple[0] @ right_tuple[0] @ torch.linalg.inv(up_tuple[0]) @ torch.linalg.inv(left_tuple[0]))
 
-    face_tensor = reverse_feedback(n, Edges_mul, N)
+    face_tensor = reverse_feedback(n, Edges_mul, N_tensor)
 
-    dictionary = {
-    'up': up_tuple,
-    'down': down_tuple,
-    'left': left_tuple,
-    'right': right_tuple,
-    'value': face_tensor}
+    final_tuple = (up_tuple[0], up_tuple[1], down_tuple[0], down_tuple[1], left_tuple[0], left_tuple[1], right_tuple[0], right_tuple[1], face_tensor)
 
-    return dictionary
+    return final_tuple
 
 def horizontal_compose_with(elem1, elem2):
     
-    new_value = (
-        elem1['down'][0] @ elem2['value'] @ torch.linalg.inv(elem1['down'][1]) @ elem1['value']
-    )
-    new_up = tuple(u1 * u2 for u1, u2 in zip(elem1['up'], elem2['up']))
-    new_down = tuple(d1 * d2 for d1, d2 in zip(elem1['down'], elem2['down']))
+    new_value = elem1[2] @ elem2[8] @ torch.linalg.inv(elem1[3]) @ elem1[8]
+    
+    new_up_1 = elem1[0] @ elem2[0]
+    new_up_2 = elem1[1] @ elem2[1]
 
-    return {
-        'up': new_up,
-        'down': new_down,
-        'left': elem1['left'],   # left = left_1
-        'right': elem2['right'], # right = right_2
-        'value': new_value
-    }
+    new_down_1 = elem1[2] @ elem2[2]
+    new_down_2 = elem1[3] @ elem2[3]
+
+    tuple = (new_up_1, new_up_2, new_down_1, new_down_2, elem1[4], elem1[5], elem2[6], elem2[7], new_value)
+    
+    return tuple
 
 def vertical_compose_with(elem1, elem2):
-    new_value = (
-        elem1['value'] @ elem1['left'][0] @ elem2['value'] @ torch.linalg.inv(elem1['left'][1]) 
-    )
-    new_left = tuple(u1 @ u2 for u1, u2 in zip(elem1['left'], elem2['left']))
-    new_right = tuple(d1 @ d2 for d1, d2 in zip(elem1['right'], elem2['right']))
 
-    return {
-        'up': elem2['up'],   # left = left_1
-        'down': elem1['down'], # right = right_2
-        'left': new_left,
-        'right': new_right,
-        'value': new_value
-    }
+    new_value = elem1[8] @ elem1[4] @ elem2[8] @ torch.linalg.inv(elem1[5]) 
 
+    new_left_1 = elem1[4] @ elem2[4]
+    new_left_2 = elem1[5] @ elem2[5]
+
+    new_right_1 = elem1[6] @ elem2[6]
+    new_right_2 = elem1[7] @ elem2[7]
+
+    tuple = (elem2[0], elem2[1], elem1[2], elem1[1], new_left_1, new_left_2, new_right_1, new_right_2, new_value)
+    return tuple
+
+@torch.compile
 def cal_aggregate(horizontal_compose_with, vertical_compose_with, elements):
-    aggregate_horizontal = associative_scan(horizontal_compose_with, elements, dim=1)
 
-    flipped = {key: (tuple(tensor.flip(0) for tensor in value) if isinstance(value, tuple) 
-                              else value.flip(0))
-                        for key, value in elements.items()}
-    flipped_scanned = associative_scan(vertical_compose_with, flipped, dim=0)
-    aggregate = {key: (tuple(tensor.flip(0) for tensor in value) if isinstance(value, tuple) 
-                          else value.flip(0))
-                    for key, value in flipped_scanned.items()}
+    aggregate_horizontal = associative_scan(horizontal_compose_with, elements, dim=1, combine_mode='generic')
+
+    flipped = tuple(t.flip(0) for t in aggregate_horizontal)
+    flipped_scanned = associative_scan(vertical_compose_with, flipped, dim=0, combine_mode='generic')
+    aggregate = tuple(t.flip(0) for t in flipped_scanned)
+
     return aggregate
 
 n = 2
 p = 1
 q = 1
 batch_size = 2
-images = torch.rand(batch_size, 5, 5)
-elements = to_dictionary(n, p, q, images, from_vector, kernel_gl1)
-aggregate = cal_aggregate(horizontal_compose_with, vertical_compose_with, elements)
+images = torch.rand(batch_size, 5, 5).to(device)
+elements = to_tuple(n, p, q, images, from_vector, kernel_gl1)
 
-print(aggregate)
+
+for i in range(100):
+    start_time = time.time()
+    aggregate = cal_aggregate(horizontal_compose_with, vertical_compose_with, elements)
+    end_time = time.time()
+    print(end_time - start_time)
+
+print(aggregate[0].size())
 
 # Game plan
 # Data into dictionary 
