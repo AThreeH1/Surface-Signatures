@@ -1,5 +1,6 @@
 from imports import *
 from gl0_and_gl1_torch import GL0Element, GL1Element
+from lifting import from_vector, kernel_gl1
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -394,7 +395,7 @@ class GridOf2Cells:
         return f"GridOf2Cells(rows={self.rows}, cols={self.cols}, batch_size={self.batch_size}, matrix={as_string})"
 
 @torch.compile
-def to_custom_matrix(image, from_vector, kernel_gl1):
+def to_custom_matrix(n, p, q, image, from_vector, kernel_gl1):
     """
     Maps elements from a batched image to the custom batched matrix structure.
     Args:
@@ -403,32 +404,37 @@ def to_custom_matrix(image, from_vector, kernel_gl1):
         GridOf2Cells: Mapped batched structure
     """
 
-    batch_size, m, n = image.shape
+    batch_size, a, b = image.shape
     # print("B")
     gl0 = GL0Element(batch_size, 2, 1, 1)
     # print("C")
-    Map = GridOf2Cells(batch_size, m - 1, n - 1)
+    Map = GridOf2Cells(batch_size, a - 1, b - 1)
     # print("D")
-    for i in range(m - 1):
+    for i in range(a - 1):
         # print("A")
-        for j in range(n - 1):
+        for j in range(b - 1):
             # print("P")
 
             if i == 0: 
-                pu = gl0.from_vector(batch_size, image[:, i, j], image[:, i, j + 1])
+                pu_raw = from_vector(n, p, q, batch_size, image[:, i, j], image[:, i, j + 1])
+                pu = GL0Element(batch_size, n, p, q, pu_raw[0], pu_raw[1])
+
             else:
                 pu = Map[i-1, j].down
 
             if j == 0:
-                pl = gl0.from_vector(batch_size, image[:, i + 1, j], image[:, i, j])
+                pl_raw = from_vector(n, p, q, batch_size, image[:, i + 1, j], image[:, i, j])
+                pl = GL0Element(batch_size, n, p, q, pl_raw[0], pl_raw[1])
             else:
                 pl = Map[i, j-1].right
 
             # Create batched GL0 elements
             # pu = from_vector(batch_size, image[:, i, j], image[:, i, j + 1])
-            pd = gl0.from_vector(batch_size, image[:, i + 1, j], image[:, i + 1, j + 1])
+            pd_raw = from_vector(n, p, q, batch_size, image[:, i + 1, j], image[:, i + 1, j + 1])
+            pd = GL0Element(batch_size, n, p, q, pd_raw[0], pd_raw[1])
             # pl = from_vector(batch_size, image[:, i + 1, j], image[:, i, j])
-            pr = gl0.from_vector(batch_size, image[:, i + 1, j + 1], image[:, i, j + 1])
+            pr_raw = from_vector(n, p, q, batch_size, image[:, i + 1, j + 1], image[:, i, j + 1])
+            pr = GL0Element(batch_size, n, p, q, pr_raw[0], pr_raw[1])
 
             # Assign to grid
             Map[i, j].left = pl
@@ -444,7 +450,7 @@ def to_custom_matrix(image, from_vector, kernel_gl1):
             p2 = image[:, i + 1, j]
             p3 = image[:, i + 1, j + 1] 
             p4 = image[:, i, j + 1]
-            N = gl0.kernel_gl1(p1, p2, p3, p4) # Shape (batch_size, 1, 1)
+            N = kernel_gl1(p1, p2, p3, p4, p, q) # Shape (batch_size, 1, 1)
 
             # Create GL1 elements in batch
             GL1 = gl0.reverse_feedback(Edges_mul, N)
@@ -455,35 +461,37 @@ def to_custom_matrix(image, from_vector, kernel_gl1):
 if __name__ == "__main__":
     batch_size = 1  # Number of batches
     m = 3           # Rows in each image
-    n = 4           # Columns in each image
+    n = 2           # Columns in each image
+    p = 1
+    q = 1
 
-    def from_vector(m, Xt, Xs):
-        n, p, q = 2, 1, 1
-        fV = torch.eye(n + p).repeat(m, 1, 1).to(device)
-        fU = torch.eye(n + q).repeat(m, 1, 1).to(device)
-        dX = (Xs - Xt).to(device)
+    # def from_vector(m, Xt, Xs):
+    #     n, p, q = 2, 1, 1
+    #     fV = torch.eye(n + p).repeat(m, 1, 1).to(device)
+    #     fU = torch.eye(n + q).repeat(m, 1, 1).to(device)
+    #     dX = (Xs - Xt).to(device)
 
-        fV[:, 0, 0] = fU[:, 0, 0] = torch.exp(dX)
-        fV[:, 1, 1] = fU[:, 1, 1] = torch.exp(dX ** 2)
-        fV[:, 2, 0] = torch.sin(dX)
-        fV[:, 2, 1] = dX ** 5
-        fU[:, 0, 2] = dX ** 3
-        fU[:, 1, 2] = 7 * dX
+    #     fV[:, 0, 0] = fU[:, 0, 0] = torch.exp(dX)
+    #     fV[:, 1, 1] = fU[:, 1, 1] = torch.exp(dX ** 2)
+    #     fV[:, 2, 0] = torch.sin(dX)
+    #     fV[:, 2, 1] = dX ** 5
+    #     fU[:, 0, 2] = dX ** 3
+    #     fU[:, 1, 2] = 7 * dX
  
-        return GL0Element(m, n, p, q, fV, fU)
+    #     return GL0Element(m, n, p, q, fV, fU)
 
-    def kernel_gl1(p1, p2, p3, p4):
-        return (p1+p3-p2-p4).unsqueeze(-1).unsqueeze(-1).to(device)
+    # def kernel_gl1(p1, p2, p3, p4):
+    #     return (p1+p3-p2-p4).unsqueeze(-1).unsqueeze(-1).to(device)
 
     torch.manual_seed(42)
-    image = torch.rand(batch_size, m, n)  # Generate batched random images
+    image = torch.rand(batch_size, m, m)  # Generate batched random images
 
     # Map the batched image
-    ImageBatch = to_custom_matrix(image, from_vector, kernel_gl1)
+    ImageBatch = to_custom_matrix(n, p, q, image, from_vector, kernel_gl1)
 
     # Validate each TwoCellBatch in the grid for all batches
     for i in range(m - 1):
-        for j in range(n - 1):
+        for j in range(m - 1):
             ImageBatch[i, j].validate()  # Validate each batch separately
 
     # Example of accessing specific elements and printing their tuples for the first batch

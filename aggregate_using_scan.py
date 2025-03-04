@@ -1,24 +1,25 @@
 from imports import *
 from torch._higher_order_ops.associative_scan import associative_scan
+from lifting import from_vector, kernel_gl1
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-def from_vector(n, p, q, m, Xt, Xs):
+# def from_vector(n, p, q, m, Xt, Xs):
 
-    fV = torch.eye(n + p).repeat(m, 1, 1)
-    fU = torch.eye(n + q).repeat(m, 1, 1)
-    dX = (Xs - Xt).to(device)
+#     fV = torch.eye(n + p).repeat(m, 1, 1)
+#     fU = torch.eye(n + q).repeat(m, 1, 1)
+#     dX = (Xs - Xt).to(device)
 
-    fV[:, 0, 0] = fU[:, 0, 0] = torch.exp(dX)
-    fV[:, 1, 1] = fU[:, 1, 1] = torch.exp(dX ** 2)
-    fV[:, 2, 0] = torch.sin(dX)
-    fV[:, 2, 1] = dX ** 5
-    fU[:, 0, 2] = dX ** 3
-    fU[:, 1, 2] = 7 * dX
+#     fV[:, 0, 0] = fU[:, 0, 0] = torch.exp(dX)
+#     fV[:, 1, 1] = fU[:, 1, 1] = torch.exp(dX ** 2)
+#     fV[:, 2, 0] = torch.sin(dX)
+#     fV[:, 2, 1] = dX ** 5
+#     fU[:, 0, 2] = dX ** 3
+#     fU[:, 1, 2] = 7 * dX
 
-    return (fV.to(device), fU.to(device))
+#     return (fV.to(device), fU.to(device))
 
-def kernel_gl1(p1, p2, p3, p4):
-    return (p1+p3-p2-p4).to(device).unsqueeze(-1).unsqueeze(-1)
+# def kernel_gl1(p1, p2, p3, p4):
+#     return (p1+p3-p2-p4).to(device).unsqueeze(-1).unsqueeze(-1)
 
 def reverse_feedback(n, tuple, N):
 
@@ -76,7 +77,7 @@ def to_tuple(n, p, q, image, from_vector, kernel_gl1):
             p2 = image[:, i + 1, j]
             p3 = image[:, i + 1, j + 1] 
             p4 = image[:, i, j + 1]
-            N[i].append(kernel_gl1(p1, p2, p3, p4))
+            N[i].append(kernel_gl1(p1, p2, p3, p4, p, q))
 
     def stack_grid(grid):
         a_rows = []
