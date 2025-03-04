@@ -10,9 +10,9 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 # - just time-benchmark horizontal_first_aggregate
 #    - [x] eager CPU 0.0011, 0.0008, 0.0014 seconds 
                # GPU 0.110, 0.112, 0.113 seconds
-#    - [x] torch.compile CPU 0.511, 0.497, 0.504 secons
-               # GPU 3.58, 3.11, 3.11 seconds
-#    - [ ] associative scan
+#    - [x] torch.compile CPU 0.001 seconds
+               # GPU 0.003 seconds
+#    - [x] associative scan
 
 
 
@@ -21,6 +21,10 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 # [x] TODO overleaf describe Rf 
 # TODO Isolate every class and function and optimize 
 # TODO time stamp with eager and compile w/parallel scan 
+
+# TODO torch.compile on decrete loops?
+# TODO general case for lifting procedure
+# TODO play with associative scan
 
 
 @torch.compile
@@ -162,7 +166,7 @@ if __name__ == "__main__":
 
     # Generate a batch of random images
     images = torch.rand(batch_size, m, m)
-    
+
     # Map the batch of images
     Images = to_custom_matrix(images, from_vector, kernel_gl1)  # Assuming to_custom_matrix is batch-compatible
     
@@ -174,11 +178,11 @@ if __name__ == "__main__":
         end_time = time.time()
         elapsed_time = end_time - start_time
         Time.append(elapsed_time)
-        print(f"Execution Time: {elapsed_time} seconds")
+        # print(f"Execution Time: {elapsed_time} seconds")
 
     print((sum(Time)/100))
-    
 
+    # print("Loop = ", Aggregate_1[0,0].value.matrix[0])
     # print("Horizontal first aggregate (Batch):")
     # print(Aggregate_1[0, 0].value.matrix)
     
@@ -217,11 +221,17 @@ if __name__ == "__main__":
     # )
     
     # Validation for another image
+    torch.manual_seed(42)
     images = torch.rand(batch_size, 5, 5)
+    print("initial = ", images[0])
     Images = to_custom_matrix(images, from_vector, kernel_gl1)
     for i in range(Images.rows):
         for j in range(Images.cols):
             Images[i, j].validate()  # Validate all cells in the batch
+    
+    # checking associativity
+    print(Images[0, 2].value.matrix)
+    assert torch.allclose(((Images[0, 0].horizontal_compose_with(Images[0, 1])).horizontal_compose_with(Images[0,2])).value.matrix, (Images[0, 0].horizontal_compose_with(Images[0, 1].horizontal_compose_with(Images[0,2]))).value.matrix)
     
     # Check horizontal composition associativity for the batch
     assert torch.allclose(

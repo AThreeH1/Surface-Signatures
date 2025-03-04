@@ -4,10 +4,12 @@ from torch._higher_order_ops.associative_scan import associative_scan
 # Define the associative binary function
 def custom_fn(x, y):
     """Example of a custom associative function between dictionary elements"""
-    a1, b1 = x  # Previous step (scan state)
-    a2, b2 = y  # Current step (new input)
+    # a1, b1 = x  # Previous step (scan state)
+    # a2, b2 = y  # Current step (new input)
 
-    return a1 * b2, a2 * b1  # Example interdependent operation
+    # return a1 + b2, a2 * b1  # Example interdependent operation
+    # return a1 + 1, b1 + 10
+    return x+y
 
 # Create a dictionary (pytree) of CUDA tensors
 input_dict = {
@@ -18,11 +20,20 @@ input_dict = {
 # Convert the dictionary into a tuple of tensors
 input_tuple = (input_dict['a'], input_dict['b'])
 
+input = torch.tensor([[1,2,3,4],[5,6,7,8]], dtype=torch.float32, device='cuda')
+# print(input_tuple)
+
 # Apply associative_scan to the structured input
-result_tuple = associative_scan(custom_fn, input_tuple, dim=0, combine_mode='pointwise')
+result_tuple = associative_scan(custom_fn, input, dim=0, combine_mode='pointwise')
+print(result_tuple)
 
 # Convert the tuple back into a dictionary
-result_dict = {'a': result_tuple[0], 'b': result_tuple[1]}
+# result_dict = {'a': result_tuple[0], 'b': result_tuple[1]}
 
 # Output the result
-print(result_dict)
+# print(result_dict)
+
+
+
+
+# result_tuple = associative_scan(custom_fn, input_tuple, dim=0, combine_mode='pointwise')
