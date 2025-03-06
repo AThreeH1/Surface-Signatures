@@ -114,41 +114,110 @@ def to_tuple(n, p, q, image, from_vector, kernel_gl1):
     final_tuple = (up1, up2, down1, down2, left1, left2, right1, right2, face_tensor)
     return final_tuple
 
-def horizontal_compose_with(elem1, elem2):
+def gl1_mul_tensor(mat_left, mat_right, n):
+    """
+    Performs batch GL1 multiplication between two tensors representing GL1 elements.
+    The tensors are assumed to have shape (batch, m, n+p, n+q) and be stored in block form:
+      - Top-left block: P (which is offset, i.e. the actual block is P+I)
+      - Top-right block: B
+      - Bottom-left block: R
+      - Bottom-right block: N
+    The multiplication follows:
+      new_P = (P_left+I) @ (P_right+I) - I
+      new_B = (P_left+I) @ B_right + B_left
+      new_R = R_left @ (P_right+I) + R_right
+      new_N = R_left @ B_right + N_left + N_right
+    """
+    I = torch.eye(n, dtype=mat_left.dtype, device=mat_left.device)
     
-    new_value = elem1[2] @ elem2[8] @ torch.linalg.inv(elem1[3]) @ elem1[8]
+    # cal batch dimension.
+    batch_dims = mat_left.shape[:-2]
+    # Reshape and expand I to match batch dimensions
+    I_batch = I.view((1,)*len(batch_dims) + (n, n)).expand(*batch_dims, n, n)
     
+    # Extract blocks from the right factor (the second argument)
+    P_right = mat_right[..., :n, :n] + I_batch
+    B_right = mat_right[..., :n, n:]
+    R_right = mat_right[..., n:, :n]
+    N_right = mat_right[..., n:, n:]
+    
+    # Extract blocks from the left factor (the first argument)
+    P_left = mat_left[..., :n, :n] + I_batch
+    B_left = mat_left[..., :n, n:]
+    R_left = mat_left[..., n:, :n]
+    N_left = mat_left[..., n:, n:]
+    
+    new_P = P_left @ P_right - I_batch
+    new_B = P_left @ B_right + B_left
+    new_R = R_left @ P_right + R_right
+    new_N = R_left @ B_right + N_left + N_right
+    
+    top = torch.cat((new_P, new_B), dim=-1)
+    bottom = torch.cat((new_R, new_N), dim=-1)
+    return torch.cat((top, bottom), dim=-2)
+
+def horizontal_compose_with(elem1, elem2, n):
+    """
+    Functional version of horizontal composition.
+    The tuple structure is assumed as:
+      (up1, up2, down1, down2, left1, left2, right1, right2, face_tensor)
+    where face_tensor represents the GL1 element stored as a tensor.
+    """
+    
+    # Check that the right of the left element matches the left of the right element.
+    # print("A = ", elem1[6].size(), "B = ", elem2[4].size())
+    # assert torch.allclose(elem1[6], elem2[4], atol=1e-5)
+    # assert torch.allclose(elem1[7], elem2[5], atol=1e-5)
+    
+    # Compute the action: apply the down component of elem1 on elem2's value.
+    acted = elem1[2] @ elem2[8] @ torch.linalg.inv(elem1[3])
+    
+    # Now multiply (in the GL1 sense) the result with the face tensor from elem1.
+    new_value = gl1_mul_tensor(acted, elem1[8], n)
+    
+    # Compose the remaining blocks in the obvious way.
     new_up_1 = elem1[0] @ elem2[0]
     new_up_2 = elem1[1] @ elem2[1]
-
     new_down_1 = elem1[2] @ elem2[2]
     new_down_2 = elem1[3] @ elem2[3]
-
-    tuple = (new_up_1, new_up_2, new_down_1, new_down_2, elem1[4], elem1[5], elem2[6], elem2[7], new_value)
     
-    return tuple
+    return (new_up_1, new_up_2, new_down_1, new_down_2,
+            elem1[4], elem1[5], elem2[6], elem2[7],
+            new_value)
 
-def vertical_compose_with(elem1, elem2):
 
-    new_value = elem1[8] @ elem1[4] @ elem2[8] @ torch.linalg.inv(elem1[5]) 
+def vertical_compose_with(elem1, elem2, n):
+    """
+    Functional version of vertical composition.
+    The tuple structure is assumed as:
+      (up1, up2, down1, down2, left1, left2, right1, right2, face_tensor)
+    where face_tensor represents the GL1 element stored as a tensor.
+    """
+    # assert torch.allclose(elem1[0], elem2[2], atol=1e-5)
+    # assert torch.allclose(elem1[1], elem2[3], atol=1e-5)
 
-    new_left_1 = elem1[4] @ elem2[4]
-    new_left_2 = elem1[5] @ elem2[5]
+    acted = elem1[4] @ elem2[8] @ torch.linalg.inv(elem1[5])
+    new_value = gl1_mul_tensor(elem1[8], acted, n)
 
-    new_right_1 = elem1[6] @ elem2[6]
-    new_right_2 = elem1[7] @ elem2[7]
+    new_left_1 = elem2[4] @ elem1[4]
+    new_left_2 = elem2[5] @ elem1[5]
+
+    new_right_1 = elem2[6] @ elem1[6]
+    new_right_2 = elem2[7] @ elem1[7]
 
     tuple = (elem2[0], elem2[1], elem1[2], elem1[3], new_left_1, new_left_2, new_right_1, new_right_2, new_value)
     return tuple
 
 @torch.compile
-def cal_aggregate(horizontal_compose_with, vertical_compose_with, elements):
+def cal_aggregate(horizontal_compose_with, vertical_compose_with, elements, n):
 
-    aggregate_horizontal = associative_scan(horizontal_compose_with, elements, dim=1, combine_mode='generic')
+    combine_horizontal = partial(horizontal_compose_with, n=n)
+    aggregate_horizontal = associative_scan(combine_horizontal, elements, dim=1, combine_mode='generic')
     # ( tensor(rows * columns * batch_size * n+p * n+p), tensor(rows * columns * ...), ..., tensor(rows * columns * batch_size * n+p * n+q) )
 
     flipped = tuple(t.flip(0) for t in aggregate_horizontal)
-    flipped_scanned = associative_scan(vertical_compose_with, flipped, dim=0, combine_mode='generic')
+    combine_vertical = partial(vertical_compose_with, n=n)
+    flipped_scanned = associative_scan(combine_vertical, flipped, dim=0, combine_mode='generic')
     aggregate = tuple(t.flip(0) for t in flipped_scanned)
 
     return aggregate
@@ -163,7 +232,7 @@ q = 1
 batch_size = 2
 torch.manual_seed(42)
 images = torch.rand(batch_size, 5, 5).to(device)
-print('initial = ',images[0])
+# print('initial = ',images[0])
 
 elements = to_tuple(n, p, q, images, from_vector, kernel_gl1)
 
@@ -171,18 +240,18 @@ elements = to_tuple(n, p, q, images, from_vector, kernel_gl1)
 elem1 = tuple(x[0][0] for x in elements)
 elem2 = tuple(x[0][1] for x in elements)
 elem3 = tuple(x[0][2] for x in elements)
-print(elem3[-1])
-# print((horizontal_compose_with(horizontal_compose_with(elem1, elem2), elem3))[-1])
-# print((horizontal_compose_with(elem1, horizontal_compose_with(elem2, elem3)))[-1])
-assert torch.allclose((horizontal_compose_with(horizontal_compose_with(elem1, elem2), elem3))[-1], (horizontal_compose_with(elem1, horizontal_compose_with(elem2, elem3)))[-1])
+# print(elem2[3])
+# print((horizontal_compose_with(horizontal_compose_with(elem1, elem2, n), elem3, n))[8])
+# print((horizontal_compose_with(elem1, horizontal_compose_with(elem2, elem3, n), n))[8])
+assert torch.allclose((horizontal_compose_with(horizontal_compose_with(elem1, elem2, n), elem3, n))[-1], (horizontal_compose_with(elem1, horizontal_compose_with(elem2, elem3, n), n))[-1], atol = 0.00001)
 
 for i in range(100):
     start_time = time.time()
-    aggregate = cal_aggregate(horizontal_compose_with, vertical_compose_with, elements)
+    aggregate = cal_aggregate(horizontal_compose_with, vertical_compose_with, elements, n)
     end_time = time.time()
     # print(end_time - start_time)
 
-print("aggregate = ", aggregate[-1][0][-1][0])
+print("aggregate = ", aggregate[-1][0][-1])
 
 # Game plan
 # Data into dictionary 

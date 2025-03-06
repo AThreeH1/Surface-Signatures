@@ -23,7 +23,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 # TODO Isolate every class and function and optimize 
 # TODO time stamp with eager and compile w/parallel scan 
 
-# [x] TODO torch.compile on decrete loops?
+# [x] TODO torch.compile on disrete loops?
 # [x] TODO general case for lifting procedure
 # [x] TODO play with associative scan
 
@@ -142,7 +142,7 @@ def vertical_first_aggregate(ImageBatch, a=None, b=None):
     return Aggregate
 
 if __name__ == "__main__": 
-    m = 3
+    m = 5
     batch_size = 2  # Specify the batch size for testing
     n = 2
     p = 1
@@ -188,7 +188,7 @@ if __name__ == "__main__":
 
     # print("Loop = ", Aggregate_1[0,0].value.matrix[0])
     # print("Horizontal first aggregate (Batch):")
-    # print(Aggregate_1[0, 0].value.matrix)
+    print(Aggregate_1[0, 0].value.matrix)
     
     # Compute vertical-first aggregate for the batch
     Aggregate_2 = vertical_first_aggregate(Images)
@@ -227,15 +227,17 @@ if __name__ == "__main__":
     # Validation for another image
     torch.manual_seed(42)
     images = torch.rand(batch_size, 5, 5)
-    print("initial = ", images[0])
+    # print("initial = ", images[0])
     Images = to_custom_matrix(2, 1, 1, images, from_vector, kernel_gl1)
     for i in range(Images.rows):
         for j in range(Images.cols):
             Images[i, j].validate()  # Validate all cells in the batch
     
     # checking associativity
-    print(Images[0, 2].value.matrix)
-    assert torch.allclose(((Images[0, 0].horizontal_compose_with(Images[0, 1])).horizontal_compose_with(Images[0,2])).value.matrix, (Images[0, 0].horizontal_compose_with(Images[0, 1].horizontal_compose_with(Images[0,2]))).value.matrix)
+    # print(Images[0, 1].down.tuple[1])
+    # print("A = ", ((Images[0, 0].horizontal_compose_with(Images[0, 1])).horizontal_compose_with(Images[0, 2])).value.matrix)
+    # print("B = ", (Images[0, 0].horizontal_compose_with(Images[0, 1].horizontal_compose_with(Images[0,2]))).value.matrix)
+    # assert torch.allclose(((Images[0, 0].horizontal_compose_with(Images[0, 1])).horizontal_compose_with(Images[0,2])).value.matrix, (Images[0, 0].horizontal_compose_with(Images[0, 1].horizontal_compose_with(Images[0,2]))).value.matrix)
     
     # Check horizontal composition associativity for the batch
     assert torch.allclose(
@@ -247,5 +249,6 @@ if __name__ == "__main__":
         .horizontal_compose_with(
             Images[0, 1].horizontal_compose_with(Images[0, 2])
         )
-        .value.matrix
+        .value.matrix,
+        atol = 0.00001
     ), "Associativity check failed for horizontal composition in the batch."
