@@ -394,7 +394,7 @@ class GridOf2Cells:
         as_string = [",".join([repr(v) for v in row]) for row in self.matrix]
         return f"GridOf2Cells(rows={self.rows}, cols={self.cols}, batch_size={self.batch_size}, matrix={as_string})"
 
-@torch.compile
+# @torch.compile
 def to_custom_matrix(n, p, q, image, from_vector, kernel_gl1):
     """
     Maps elements from a batched image to the custom batched matrix structure.

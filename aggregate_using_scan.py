@@ -27,7 +27,7 @@ def reverse_feedback(n, tuple, N):
 
     return result_matrix
 
-@torch.compile
+# @torch.compile
 def to_tuple(n, p, q, image, from_vector, kernel_gl1):
 
     """
@@ -236,28 +236,28 @@ def scan_aggregate(n, p, q, images, torch_compile: bool = True):
 
     return aggregate
 
-def scan_aggregate_benchmark(n, p, q, images, torch_compile: bool = True):
+def scan_aggregate_benchmark(n, p, q, images, runs, torch_compile: bool = True):
     """
     To benchmark associative scan method
     """
 
     elems = to_tuple(n, p, q, images, from_vector, kernel_gl1)
-
+    print("in progress...")
     if torch_compile:
         compiled_function = torch.compile(cal_aggregate)
     else:
         compiled_function = cal_aggregate
 
-    time = []
-    for i in range(100):
+    Time = []
+    for i in range(runs):
         start_time = time.time()
         aggregate = compiled_function(horizontal_compose_with, vertical_compose_with, elems, n)
         end_time = time.time()
-        time.append(end_time - start_time)
+        Time.append(end_time - start_time)
         if i == 99:
             final_time = end_time - start_time
 
-    print("Using associative scan - ", f"Average time: {sum(time)/100},", f"Final time: {final_time},", f"Torch compile = {torch_compile}")
+    print("Using associative scan - ", f"Average time: {sum(Time)/100},", f"Final time: {final_time},", f"Torch compile = {torch_compile}")
 
 if __name__ == "__main__":
     n = 2

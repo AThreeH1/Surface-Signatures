@@ -47,14 +47,16 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 n = 2
 p = 1
 q = 1
-batch_size = 5
+batch_size = 1
+
+# Higher numbers below will benifit more from associative scan
 image_width = 20
 image_height = 20
 
 torch.manual_seed(42)
 images = torch.rand(batch_size, image_height, image_width).to(device)
 
-scan_aggregate_benchmark(n, p, q, images, torch_compile=True)
-loop_aggregate_benchmark(n, p, q, images, torch_compile=True)
-scan_aggregate_benchmark(n, p, q, images, torch_compile=False)
-loop_aggregate_benchmark(n, p, q, images, torch_compile=False)
+scan_aggregate_benchmark(n, p, q, images, runs=100, torch_compile=True)
+loop_aggregate_benchmark(n, p, q, images, runs=100, torch_compile=True)
+scan_aggregate_benchmark(n, p, q, images, runs=100, torch_compile=False)
+loop_aggregate_benchmark(n, p, q, images, runs=100, torch_compile=False)

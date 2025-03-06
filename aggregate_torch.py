@@ -45,99 +45,25 @@ def horizontal_first_aggregate(ImageBatch, a=None, b=None):
 
     Aggregate_horizontal = GridOf2Cells(batch_size, a, 1)
 
-                # Loop
+    # via Loop
     for i in range(a):
         Aggregate_temp = ImageBatch[i, 0]
         for j in range(1, b):
             Aggregate_temp = Aggregate_temp.horizontal_compose_with(ImageBatch[i, j])
         Aggregate_horizontal[i, 0] = Aggregate_temp.clone()
 
-                # Tree Reduction
-    # for i in range(a):
-    #     result = [ImageBatch[i,j] for j in range(b)]
-    #     i = 0
-    #     # Tree reduction
-    #     while len(result) > 1:
-    #         n = len(result)
-    #         n_pairs = n // 2  
-          
-    #         list1 = result[:2 * n_pairs:2]
-    #         list2 = result[1:2 * n_pairs:2]
-    #         print(i)
-    #         new_result = TwoCell.horizontal_compose_with(list1, list2)
-    #         i += 1
-    #         # for odd elements
-    #         if n % 2:
-    #             new_result.append(result[-1])
-            
-    #         result = new_result
-        
-    #     Aggregate_horizontal[i, 0] = new_result[0].clone()
-
     # To set final aggregate
     Aggregate = GridOf2Cells(batch_size, 1, 1)
 
-                    # Loop
+    # via Loop
     temp_value = Aggregate_horizontal[a - 1, 0]
     for i in range(1, a):
         temp_value = temp_value.vertical_compose_with(Aggregate_horizontal[a - (i + 1), 0])
     Aggregate[0,0] = temp_value.clone()
 
-                    # Tree reduction
-    # result_aggregate = [Aggregate_horizontal[i, 0] for i in range(a)]
-    # while len(result_aggregate) > 1:
-    #     n = len(result)
-    #     n_pairs = n // 2  
-        
-    #     list1 = result_aggregate[:2 * n_pairs:2]
-    #     list2 = result_aggregate[1:2 * n_pairs:2]
-        
-    #     new_result = TwoCell.vertical_compose_with(list1, list2)
-        
-    #     # for odd elements
-    #     if n % 2:
-    #         new_result.append(result[-1])
-        
-    #     result_aggregate = new_result
-
-    # Aggregate[0, 0] = result_aggregate[0].clone()
-
     return Aggregate
 
-@torch.compile
-def vertical_first_aggregate(ImageBatch, a=None, b=None):
-    """
-    Computes the vertical-first aggregate for a batch of images.
-    Args:
-        ImageBatch: Batch of images (type GridOf2Cells)
-        a: Rows up to which the aggregation is performed
-        b: Columns up to which the aggregation is performed
 
-    Returns:
-        Batch of GridOf2Cells of shape (batch_size, 1, 1)
-    """
-    batch_size = ImageBatch[0,0].value.matrix.shape[0]
-
-    if a is None and b is None:
-        a = ImageBatch.rows
-        b = ImageBatch.cols
-
-    Aggregate_vertical = GridOf2Cells(batch_size, 1, b)
-
-    for i in range(b):
-        Aggregate_temp = ImageBatch[a - 1, i]
-        for j in range(1, a):
-            Aggregate_temp = Aggregate_temp.vertical_compose_with(ImageBatch[a - (j + 1), i])
-        Aggregate_vertical[0, i] = Aggregate_temp.clone()
-
-    Aggregate = GridOf2Cells(batch_size, 1, 1)
-    temp_value = Aggregate_vertical[0, 0]
-
-    for i in range(1, b):
-        temp_value = temp_value.horizontal_compose_with(Aggregate_vertical[0, i])
-
-    Aggregate[0, 0] = temp_value.clone()
-    return Aggregate
 
 def loop_aggregate(n, p, q, images, torch_compile: bool = True):
     """
@@ -152,27 +78,27 @@ def loop_aggregate(n, p, q, images, torch_compile: bool = True):
     
     return  compiled_function(Images)
 
-def loop_aggregate_benchmark(n, p, q, images, torch_compile: bool = False):
+def loop_aggregate_benchmark(n, p, q, images, runs, torch_compile: bool = False):
     """
     To benchmark loop method
     """
     Images = to_custom_matrix(n, p, q, images, from_vector, kernel_gl1)
-
+    print("in progress...")
     if torch_compile:
         compiled_function = torch.compile(horizontal_first_aggregate)
     else:
         compiled_function = horizontal_first_aggregate
 
-    time = []
-    for i in range(100):
+    Time = []
+    for i in range(runs):
         start_time = time.time()
         aggregate = compiled_function(Images)
         end_time = time.time()
-        time.append(end_time - start_time)
+        Time.append(end_time - start_time)
         if i == 99:
             final_time = end_time - start_time
 
-    print("Using loop - ", f"Average time: {sum(time)/100},", f"Final time: {final_time},", f"Torch compile = {torch_compile}")
+    print("Using loop - ", f"Average time: {sum(Time)/100},", f"Final time: {final_time},", f"Torch compile = {torch_compile}")
 
 
 
