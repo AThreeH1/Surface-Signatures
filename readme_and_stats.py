@@ -56,6 +56,7 @@ image_height = 20
 torch.manual_seed(42)
 images = torch.rand(batch_size, image_height, image_width).to(device)
 
+# Functions below auto prints benchmarks. Final time is time required for the 100th run.
 scan_aggregate_benchmark(n, p, q, images, runs=100, torch_compile=True)
 loop_aggregate_benchmark(n, p, q, images, runs=100, torch_compile=True)
 scan_aggregate_benchmark(n, p, q, images, runs=100, torch_compile=False)
