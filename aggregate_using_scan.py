@@ -1,28 +1,18 @@
 from imports import *
 from torch._higher_order_ops.associative_scan import associative_scan
 from lifting import from_vector, kernel_gl1
-device = "cuda" if torch.cuda.is_available() else "cpu"
-
-# def from_vector(n, p, q, m, Xt, Xs):
-
-#     fV = torch.eye(n + p).repeat(m, 1, 1)
-#     fU = torch.eye(n + q).repeat(m, 1, 1)
-#     dX = (Xs - Xt).to(device)
-
-#     fV[:, 0, 0] = fU[:, 0, 0] = torch.exp(dX)
-#     fV[:, 1, 1] = fU[:, 1, 1] = torch.exp(dX ** 2)
-#     fV[:, 2, 0] = torch.sin(dX)
-#     fV[:, 2, 1] = dX ** 5
-#     fU[:, 0, 2] = dX ** 3
-#     fU[:, 1, 2] = 7 * dX
-
-#     return (fV.to(device), fU.to(device))
-
-# def kernel_gl1(p1, p2, p3, p4):
-#     return (p1+p3-p2-p4).to(device).unsqueeze(-1).unsqueeze(-1)
+device = "cuda" 
 
 def reverse_feedback(n, tuple, N):
-
+    """
+    Maps multiplication edge elements(path around the surface) to face element. 
+    Args:
+        n: parameters of GL0 and GL1
+        tuple: Edge element in GL0 using pd*pr*pu*pl (Edge elements of a face - down, right, up, left)
+        N: Bottom right element of GL1 matrix
+    Returns:
+        Face element GL1 matrix(tensor)
+    """
     M_V, M_U = tuple
     # Extract top and bottom rows for feedback
     rows, columns, m, _, _ = M_V.size()
@@ -39,13 +29,15 @@ def reverse_feedback(n, tuple, N):
 
 @torch.compile
 def to_tuple(n, p, q, image, from_vector, kernel_gl1):
+
     """
     Lifting Procedure - Maps elements from a batched image to the dictionary structure.
     Args:
-        n, p, q: parameters
+        n, p, q: parameters of GL0 and GL1
         image (torch.Tensor): Batched tensor of shape (batch_size, m, n)
+        from_vector and kernel_gl1: Lifting functions
     Returns:
-        pytree structure containing all data, specifically in tensor form at leaves
+        pytree structure containing all data, specifically in tensor form.
     """
 
     batch_size, rows, columns = image.shape
@@ -82,24 +74,23 @@ def to_tuple(n, p, q, image, from_vector, kernel_gl1):
     def stack_grid(grid):
         a_rows = []
         b_rows = []
-        for row in grid:  # Each row corresponds to fixed i
+        for row in grid:  
             a_items = []
             b_items = []
-            for elem in row:  # Elements are tuples (a, b) for each j
+            for elem in row:  
                 a, b = elem
                 a_items.append(a)
                 b_items.append(b)
-            a_rows.append(torch.stack(a_items))  # Stack along j: (columns-1, ...)
+            a_rows.append(torch.stack(a_items))  
             b_rows.append(torch.stack(b_items))
-        return torch.stack(a_rows), torch.stack(b_rows)  # Stack along i: (rows-1, columns-1, ...)
+        return torch.stack(a_rows), torch.stack(b_rows)  
 
-    # Stack up, down, left, right into tensors preserving (i, j) structure
     up1, up2 = stack_grid(up)
     down1, down2 = stack_grid(down)
     left1, left2 = stack_grid(left)
     right1, right2 = stack_grid(right)
 
-    # Stack N into a tensor preserving (i, j) structure
+    # Stack N into a tensor preserving (rows, columns) structure
     N_tensor = torch.stack([torch.stack(Ni) for Ni in N])
 
     # Compute Edges_mul (order matches to_custom_matrix)
@@ -117,7 +108,7 @@ def to_tuple(n, p, q, image, from_vector, kernel_gl1):
 def gl1_mul_tensor(mat_left, mat_right, n):
     """
     Performs batch GL1 multiplication between two tensors representing GL1 elements.
-    The tensors are assumed to have shape (batch, m, n+p, n+q) and be stored in block form:
+    The tensors have shape (batch, m, n+p, n+q) and be stored in block form:
       - Top-left block: P (which is offset, i.e. the actual block is P+I)
       - Top-right block: B
       - Bottom-left block: R
@@ -208,9 +199,14 @@ def vertical_compose_with(elem1, elem2, n):
     tuple = (elem2[0], elem2[1], elem1[2], elem1[3], new_left_1, new_left_2, new_right_1, new_right_2, new_value)
     return tuple
 
-@torch.compile
 def cal_aggregate(horizontal_compose_with, vertical_compose_with, elements, n):
-
+    """
+    Calculates final aggragate using associative scan
+    Args:
+        horizontal_compose_with and vertical_compose_with: Compose functions for two adjecent cells/faces
+        elements: tuple of GL1 and GL0 elements of an image
+        n: GL0 and GL1 parameter
+    """
     combine_horizontal = partial(horizontal_compose_with, n=n)
     aggregate_horizontal = associative_scan(combine_horizontal, elements, dim=1, combine_mode='generic')
     # ( tensor(rows * columns * batch_size * n+p * n+p), tensor(rows * columns * ...), ..., tensor(rows * columns * batch_size * n+p * n+q) )
@@ -226,32 +222,71 @@ def cal_aggregate(horizontal_compose_with, vertical_compose_with, elements, n):
 # ([[1, 2, 3],
 # [2, 3, 4]], ....)
 
-n = 2
-p = 1
-q = 1
-batch_size = 2
-torch.manual_seed(42)
-images = torch.rand(batch_size, 5, 5).to(device)
-# print('initial = ',images[0])
+def scan_aggregate(n, p, q, images, torch_compile: bool = True):
+    """
+    Easy to import just this function in other files and get the complete aggregate.
+    """
+    elems = to_tuple(n, p, q, images, from_vector, kernel_gl1)
+    if torch_compile:
+        compiled_function = torch.compile(cal_aggregate)
+    else:
+        compiled_function = cal_aggregate
 
-elements = to_tuple(n, p, q, images, from_vector, kernel_gl1)
+    aggregate = compiled_function(horizontal_compose_with, vertical_compose_with, elems, n)
 
-# associativity check
-elem1 = tuple(x[0][0] for x in elements)
-elem2 = tuple(x[0][1] for x in elements)
-elem3 = tuple(x[0][2] for x in elements)
-# print(elem2[3])
-# print((horizontal_compose_with(horizontal_compose_with(elem1, elem2, n), elem3, n))[8])
-# print((horizontal_compose_with(elem1, horizontal_compose_with(elem2, elem3, n), n))[8])
-assert torch.allclose((horizontal_compose_with(horizontal_compose_with(elem1, elem2, n), elem3, n))[-1], (horizontal_compose_with(elem1, horizontal_compose_with(elem2, elem3, n), n))[-1], atol = 0.00001)
+    return aggregate
 
-for i in range(100):
-    start_time = time.time()
-    aggregate = cal_aggregate(horizontal_compose_with, vertical_compose_with, elements, n)
-    end_time = time.time()
-    # print(end_time - start_time)
+def scan_aggregate_benchmark(n, p, q, images, torch_compile: bool = True):
+    """
+    To benchmark associative scan method
+    """
 
-print("aggregate = ", aggregate[-1][0][-1])
+    elems = to_tuple(n, p, q, images, from_vector, kernel_gl1)
+
+    if torch_compile:
+        compiled_function = torch.compile(cal_aggregate)
+    else:
+        compiled_function = cal_aggregate
+
+    time = []
+    for i in range(100):
+        start_time = time.time()
+        aggregate = compiled_function(horizontal_compose_with, vertical_compose_with, elems, n)
+        end_time = time.time()
+        time.append(end_time - start_time)
+        if i == 99:
+            final_time = end_time - start_time
+
+    print("Using associative scan - ", f"Average time: {sum(time)/100},", f"Final time: {final_time},", f"Torch compile = {torch_compile}")
+
+if __name__ == "__main__":
+    n = 2
+    p = 1
+    q = 1
+    batch_size = 2
+    torch.manual_seed(42)
+    images = torch.rand(batch_size, 5, 5).to(device)
+
+    elements = to_tuple(n, p, q, images, from_vector, kernel_gl1)
+
+    # associativity check
+    elem1 = tuple(x[0][0] for x in elements)
+    elem2 = tuple(x[0][1] for x in elements)
+    elem3 = tuple(x[0][2] for x in elements)
+
+    assert torch.allclose((horizontal_compose_with(horizontal_compose_with(elem1, elem2, n), elem3, n))[-1], (horizontal_compose_with(elem1, horizontal_compose_with(elem2, elem3, n), n))[-1], atol = 0.00001)
+
+    time = []
+    for i in range(100):
+        start_time = time.time()
+        aggregate = cal_aggregate(horizontal_compose_with, vertical_compose_with, elements, n)
+        end_time = time.time()
+        time.append(end_time - start_time)
+        # print(end_time - start_time)
+
+    print((sum(time)/100))
+
+    print("aggregate = ", aggregate[-1][0][-1])
 
 # Game plan
 # Data into dictionary 
