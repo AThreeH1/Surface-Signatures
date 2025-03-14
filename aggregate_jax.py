@@ -1,0 +1,278 @@
+import jax
+import jax.numpy as jnp
+from jax import lax
+from functools import partial
+import torch
+import time
+
+jax.config.update("jax_enable_x64", True)
+
+@partial(jax.jit, static_argnames=('n', 'p', 'q'))
+def from_vector(n, p, q, Xt, Xs):
+    # Compute the batch of differences dX
+    dX = Xs - Xt  # shape: (batch, ...)
+    dX = dX.reshape((-1, 1, 1))  # shape: (batch, 1, 1)
+    
+    ### Build block P (n x n)
+    powers = jnp.arange(1, n+1).reshape(1, n)  # shape (1, n)
+    dX_flat = dX.reshape((-1, 1))  # shape (batch, 1)
+    diag_vals = jnp.exp(dX_flat ** powers)  # shape (batch, n)
+    # Create a batch of diagonal matrices
+    P = jnp.zeros((diag_vals.shape[0], n, n))
+    P = P.at[:, jnp.arange(n), jnp.arange(n)].set(diag_vals)
+    
+    ### Build block R (p x n)
+    dX_power = dX_flat ** jnp.arange(1, n+1).reshape(1, n)  # shape (batch, n)
+    dX_power = jnp.expand_dims(dX_power, 1)  # shape (batch, 1, n)
+    row_idx = jnp.arange(p).reshape(p, 1)
+    even_mask = (row_idx % 2 == 0).astype(float).reshape(1, p, 1)
+    R = even_mask * jnp.sin(dX_power) + (1 - even_mask) * jnp.cos(dX_power)
+    
+    ### Bottom-right block S (p x p)
+    S = jnp.eye(p)[jnp.newaxis, :, :].repeat(dX.shape[0], axis=0)
+    
+    ### Assemble fV
+    zeros_np = jnp.zeros((dX.shape[0], n, p))
+    top_fV = jnp.concatenate([P, zeros_np], axis=2)
+    bottom_fV = jnp.concatenate([R, S], axis=2)
+    fV = jnp.concatenate([top_fV, bottom_fV], axis=1)
+    
+    ### Build fU
+    row_factors = jnp.arange(1, n+1).reshape(1, n, 1)
+    col_exponents = jnp.arange(1, q+1).reshape(1, 1, q)
+    B = row_factors * (dX ** col_exponents)
+    D = jnp.eye(q)[jnp.newaxis, :, :].repeat(dX.shape[0], axis=0)
+    zeros_qn = jnp.zeros((dX.shape[0], q, n))
+    top_fU = jnp.concatenate([P, B], axis=2)
+    bottom_fU = jnp.concatenate([zeros_qn, D], axis=2)
+    fU = jnp.concatenate([top_fU, bottom_fU], axis=1)
+    
+    return (fV, fU)
+
+@partial(jax.jit, static_argnames=('p', 'q'))
+def kernel_gl1(p1, p2, p3, p4, p, q):
+    Y = p1 + p3 - p2 - p4  # shape: (batch, ...)
+    Y = Y.reshape((-1, 1, 1))
+    row_mult = jnp.arange(1, p+1).reshape(1, p, 1)
+    col_exp = jnp.arange(1, q+1).reshape(1, 1, q)
+    N = row_mult * (Y ** col_exp)
+    return N
+
+@partial(jax.jit, static_argnames=('n',))
+def reverse_feedback(n, tuple_edges, N):
+    M_V, M_U = tuple_edges
+    P = M_V[..., :n, :n] - jnp.eye(n)
+    B = M_U[..., :n, n:]
+    
+    R = M_V[..., n:, :n]
+    top_row = jnp.concatenate([P, B], axis=-1)
+    bottom_row = jnp.concatenate([R, N], axis=-1)
+    result_matrix = jnp.concatenate([top_row, bottom_row], axis=-2)
+    return result_matrix
+
+@partial(jax.jit, static_argnames=('n', 'p', 'q'))
+def to_tuple(n, p, q, image):
+    batch_size, rows, cols = image.shape
+    R_dim = rows - 1
+    C_dim = cols - 1
+    
+    # Initialize empty lists for edges
+    up = [[None for _ in range(C_dim)] for _ in range(R_dim)]
+    down = [[None for _ in range(C_dim)] for _ in range(R_dim)]
+    left = [[None for _ in range(C_dim)] for _ in range(R_dim)]
+    right = [[None for _ in range(C_dim)] for _ in range(R_dim)]
+    N = [[None for _ in range(C_dim)] for _ in range(R_dim)]
+    
+    # Precompute all edges
+    for i in range(R_dim):
+        for j in range(C_dim):
+            # Compute up edge
+            if i == 0:
+                up[i][j] = from_vector(n, p, q, image[:, i, j], image[:, i, j+1])
+            else:
+                up[i][j] = down[i-1][j]
+            
+            # Compute left edge
+            if j == 0:
+                left[i][j] = from_vector(n, p, q, image[:, i+1, j], image[:, i, j])
+            else:
+                left[i][j] = right[i][j-1]
+            
+            # Compute down edge
+            down[i][j] = from_vector(n, p, q, image[:, i+1, j], image[:, i+1, j+1])
+            
+            # Compute right edge
+            right[i][j] = from_vector(n, p, q, image[:, i+1, j+1], image[:, i, j+1])
+            
+            # Compute N
+            p1 = image[:, i, j]
+            p2 = image[:, i+1, j]
+            p3 = image[:, i+1, j+1]
+            p4 = image[:, i, j+1]
+            N[i][j] = kernel_gl1(p1, p2, p3, p4, p, q)
+    
+    # Stack grids into tensors for the “edge” components
+    def stack(grid):
+        fV_stack = []
+        fU_stack = []
+        for row in grid:
+            fV_row = []
+            fU_row = []
+            for elem in row:
+                fV, fU = elem
+                fV_row.append(fV)
+                fU_row.append(fU)
+            fV_stack.append(jnp.stack(fV_row))
+            fU_stack.append(jnp.stack(fU_row))
+        return jnp.stack(fV_stack), jnp.stack(fU_stack)
+    
+    up_v, up_u = stack(up)
+    down_v, down_u = stack(down)
+    left_v, left_u = stack(left)
+    right_v, right_u = stack(right)
+    N_tensor = jnp.stack([jnp.stack(Ni) for Ni in N])
+    
+    # Compute Edges_mul (we work on the V and U parts separately)
+    Edges_mul = (
+        jnp.einsum('...ab,...bc->...ac', down_v, right_v) @ 
+        jnp.linalg.inv(up_v) @ jnp.linalg.inv(left_v),
+        jnp.einsum('...ab,...bc->...ac', down_u, right_u) @ 
+        jnp.linalg.inv(up_u) @ jnp.linalg.inv(left_u)
+    )
+    face_tensor = reverse_feedback(n, Edges_mul, N_tensor)
+    
+    return (up_v, up_u, down_v, down_u, left_v, left_u, right_v, right_u, face_tensor)
+
+@partial(jax.jit, static_argnames=('n',))
+def gl1_mul_tensor(mat_left, mat_right, n):
+    I = jnp.eye(n)
+    batch_shape = mat_left.shape[:-2]
+    I_batch = jnp.broadcast_to(I, batch_shape + I.shape)
+    
+    P_left = mat_left[..., :n, :n] + I_batch
+    B_left = mat_left[..., :n, n:]
+    R_left = mat_left[..., n:, :n]
+    N_left = mat_left[..., n:, n:]
+    
+    P_right = mat_right[..., :n, :n] + I_batch
+    B_right = mat_right[..., :n, n:]
+    R_right = mat_right[..., n:, :n]
+    N_right = mat_right[..., n:, n:]
+    
+    new_P = P_left @ P_right - I_batch
+    new_B = P_left @ B_right + B_left
+    new_R = R_left @ P_right + R_right
+    new_N = R_left @ B_right + N_left + N_right
+    
+    top = jnp.concatenate([new_P, new_B], axis=-1)
+    bottom = jnp.concatenate([new_R, new_N], axis=-1)
+    return jnp.concatenate([top, bottom], axis=-2)
+
+@partial(jax.jit, static_argnames=('n',))
+def horizontal_compose(elem1, elem2, n):
+    up1_v, up1_u, down1_v, down1_u, left1_v, left1_u, right1_v, right1_u, val1 = elem1
+    up2_v, up2_u, down2_v, down2_u, left2_v, left2_u, right2_v, right2_u, val2 = elem2
+    
+    # Compute the action using down edges from elem1 on elem2's face tensor
+    acted = down1_v @ val2 @ jnp.linalg.inv(down1_u)
+    new_face = gl1_mul_tensor(acted, val1, n)
+    
+    new_up_v = up1_v @ up2_v
+    new_up_u = up1_u @ up2_u
+    new_down_v = down1_v @ down2_v
+    new_down_u = down1_u @ down2_u
+    
+    return (new_up_v, new_up_u, new_down_v, new_down_u,
+            left1_v, left1_u, right2_v, right2_u, new_face)
+
+@partial(jax.jit, static_argnames=('n',))
+def vertical_compose(elem1, elem2, n):
+    up1_v, up1_u, down1_v, down1_u, left1_v, left1_u, right1_v, right1_u, val1 = elem1
+    up2_v, up2_u, down2_v, down2_u, left2_v, left2_u, right2_v, right2_u, val2 = elem2
+    
+    # Compute the action using left edges from elem1 on elem2's face tensor
+    acted = left1_v @ val2 @ jnp.linalg.inv(left1_u)
+    new_face = gl1_mul_tensor(val1, acted, n)
+    
+    new_left_v = left2_v @ left1_v
+    new_left_u = left2_u @ left1_u
+    new_right_v = right2_v @ right1_v
+    new_right_u = right2_u @ right1_u
+    
+    return (up2_v, up2_u, down1_v, down1_u,
+            new_left_v, new_left_u, new_right_v, new_right_u, new_face)
+
+def cal_aggregate(elements, n):
+
+
+    # Define the horizontal composition function for the associative scan.
+    def horizontal_associative_compose(cell1, cell2):
+        return horizontal_compose(cell1, cell2, n)
+
+    # Horizontal associative scan along columns (axis=1)
+    horizontal_scanned = jax.lax.associative_scan(horizontal_associative_compose, elements, axis=1)
+    # Shape (rows, cols, batch, ...)
+
+    # Flip the grid along axis 0 (vertical axis) before vertical scan
+    flipped = jax.tree_map(lambda x: jnp.flip(x, axis=0), horizontal_scanned)
+
+    # Define the vertical composition function for the associative scan.
+    def vertical_associative_compose(cell1, cell2):
+        return vertical_compose(cell1, cell2, n)
+
+    # Perform vertical associative scan along axis=0 on the flipped grid.
+    flipped_scanned = jax.lax.associative_scan(vertical_associative_compose, flipped, axis=0)
+
+    # Flip back along axis 0 to restore the original order.
+    aggregated = jax.tree_map(lambda x: jnp.flip(x, axis=0), flipped_scanned)
+
+    return aggregated
+
+def jax_scan_aggregate(n, p, q, images, jax_jit: bool = True):
+
+    # Each component has shape (rows, cols, batch, ...)
+    up_v, up_u, down_v, down_u, left_v, left_u, right_v, right_u, face_tensor = to_tuple(n, p, q, images)
+    elements = (up_v, up_u, down_v, down_u, left_v, left_u, right_v, right_u, face_tensor)
+
+    if jax_jit:
+        compiled_function = jax.jit(cal_aggregate, static_argnames=('n',))
+    else:
+        compiled_function = cal_aggregate
+
+    aggregate = compiled_function(elements, n)
+
+    return aggregate 
+
+def jax_scan_aggregate_benchmark(n, p, q, images, runs, jax_jit: bool = True):
+
+    up_v, up_u, down_v, down_u, left_v, left_u, right_v, right_u, face_tensor = to_tuple(n, p, q, images)
+    elements = (up_v, up_u, down_v, down_u, left_v, left_u, right_v, right_u, face_tensor)
+    # Shape (rows, cols, batch, ...)
+
+    print("in progress...")
+    if jax_jit:
+        compiled_function = jax.jit(cal_aggregate, static_argnames=('n',))
+    else:
+        compiled_function = cal_aggregate
+
+    Time = []
+    for i in range(runs):
+        start_time = time.time()
+        aggregate = compiled_function(elements, n)
+        end_time = time.time()
+        Time.append(end_time - start_time)
+
+    final_time = Time[-1]
+   
+    print("Using associative scan in JAX - ", f"Average time: {sum(Time)/runs},", f"Final time: {final_time},", f"jax_jit = {jax_jit}")
+
+
+if __name__ == "__main__":
+    batch_size = 2
+    torch.manual_seed(42)
+    images_torch = torch.rand(batch_size, 5, 5)
+    image = jnp.asarray(images_torch.numpy())
+    print(image)
+    n, p, q = 2, 1, 1
+    aggregate = jax_scan_aggregate(n, p, q, image)
+    print(aggregate[-1][0][-1])

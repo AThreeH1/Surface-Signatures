@@ -1,4 +1,8 @@
 """
+# TODO runs in jax and jax compile
+# TODO loops in functional 
+# TODO Tensor sizes 
+
 The repository contains two ways to calculate surface signature
 
 1. Object oriented 
@@ -40,25 +44,51 @@ PLEASE RUN THIS README FILE FOR STATISTICS AND BENCHMARKING
 """
 
 import torch
-from aggregate_using_scan import scan_aggregate_benchmark
-from aggregate_torch import loop_aggregate_benchmark
+import jax
+import jax.numpy as jnp
+from aggregate_using_scan import scan_aggregate_benchmark, scan_aggregate
+from aggregate_torch import loop_aggregate_benchmark, loop_aggregate
+from aggregate_jax import jax_scan_aggregate, jax_scan_aggregate_benchmark
 device = "cuda" if torch.cuda.is_available() else "cpu"
+jax.config.update("jax_enable_x64", True)
 
 n = 2
 p = 1
 q = 1
 batch_size = 1
 
-# Higher numbers below will benifit more from associative scan
-image_width = 20
-image_height = 20
+# Higher numbers below will benefit more from associative scan
+image_width = 200
+image_height = 200
 
 torch.manual_seed(42)
-images = torch.rand(batch_size, image_height, image_width).to(device)
+images = torch.rand(batch_size, image_height, image_width, device = device, dtype = torch.float64)
+images_numpy = images.detach().cpu().numpy()  
+images_jax = jax.device_put(jnp.array(images_numpy))
 
+aggregate_using_scan = scan_aggregate(n, p, q, images, torch_compile = False)
+# aggregate_using_loop = loop_aggregate(n, p, q, images, torch_compile = False)
+aggregate_using_scan_jax = jax_scan_aggregate(n, p, q, images_jax, jax_jit = False)
+print("aggregate_using_scan = ", aggregate_using_scan[-1][0][-1])
+print("aggregate_using_scan_JAX = ",aggregate_using_scan_jax[-1][0][-1])
+# print("aggregate_using_loop = ",aggregate_using_loop[0,0].value.matrix)
+
+# assert torch.allclose(aggregate_using_scan[-1][0][-1], aggregate_using_loop[0,0].value.matrix, atol = 0.1)
+
+
+runs = 200
 # Functions below auto prints benchmarks. Final time is time required for the 100th run.
-scan_aggregate_benchmark(n, p, q, images, runs=100, torch_compile=True)
-loop_aggregate_benchmark(n, p, q, images, runs=100, torch_compile=True)
+scan_aggregate_benchmark(n, p, q, images, runs=runs, torch_compile=True)
+# loop_aggregate_benchmark(n, p, q, images, runs=runs, torch_compile=True)
+jax_scan_aggregate_benchmark(n, p, q, images_jax, runs=runs, jax_jit=True)
 # Associative scan internally also has torch compile - which is not disabled.
-scan_aggregate_benchmark(n, p, q, images, runs=100, torch_compile=False)
-loop_aggregate_benchmark(n, p, q, images, runs=100, torch_compile=False)
+print()
+print()
+scan_aggregate_benchmark(n, p, q, images, runs=runs, torch_compile=False)
+# loop_aggregate_benchmark(n, p, q, images, runs=runs, torch_compile=False)
+jax_scan_aggregate_benchmark(n, p, q, images_jax, runs=runs, jax_jit=False)
+print()
+print()
+
+
+

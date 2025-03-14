@@ -12,7 +12,7 @@ def from_vector(n, p, q, m, Xt, Xs):
     ### Build block for fV and fU: the top-left block P (n x n)
     # For each batch element, we want a diagonal matrix with:
     # [exp(dX^1), exp(dX^2), ..., exp(dX^n)]
-    powers = torch.arange(1, n+1, device=device).view(1, n)  # shape (1, n)
+    powers = torch.arange(1, n+1, device=device, dtype = torch.float64).view(1, n)  # shape (1, n)
     # dX flattened to (m,1) so that each batch element is raised to each power:
     dX_flat = dX.view(m, 1)  # shape (m, 1)
     diag_vals = torch.exp(dX_flat ** powers)  # shape (m, n)

@@ -236,7 +236,7 @@ class GL1Element:
         Generate a random GL1Element for a batch of m elements.
         """
         # Generate random invertible n x n block
-        top_left = torch.eye(n).unsqueeze(0).repeat(m, 1, 1) + torch.randint(1, 10, (m, n, n)).to(device)
+        top_left = torch.eye(n).unsqueeze(0).repeat(m, 1, 1).to(device) + torch.randint(1, 10, (m, n, n)).to(device)
 
         # Generate random blocks for the rest of the matrix
         top_right = torch.randint(0, 10, (m, n, q)).to(device)  # Top-right block
@@ -250,7 +250,7 @@ class GL1Element:
 
         return GL1Element(m, n, p, q, matrix)
 
-def equivariance():
+def test_equivariance():
     m, n, p, q = 1, 2, 1, 1
 
     # Generate random elements using PyTorch
@@ -272,7 +272,7 @@ def equivariance():
     # print(f"{LHS.tuple[1]=}", f"{RHS.tuple[1]=}")
     assert torch.allclose(LHS.tuple[1], RHS.tuple[1], atol=0.001), "Second tuple elements are not close!"
 
-def tau_morphism():
+def test_tau_morphism():
     m, n, p, q = 1, 2, 1, 1
     gl1_a = GL1Element.random_element(m, n, p, q)
     gl1_b = GL1Element.random_element(m, n, p, q)
@@ -288,7 +288,7 @@ def tau_morphism():
     assert torch.allclose(feedback_product.tuple[0], composed_feedback.tuple[0]), "Feedback morphism fails for M_V"
     assert torch.allclose(feedback_product.tuple[1], composed_feedback.tuple[1]), "Feedback morphism fails for M_U"
 
-def peiffer_identity():
+def test_peiffer_identity():
     m, n, p, q = 1, 2, 1, 1
     gl1_a = GL1Element.random_element(m, n, p, q)
     gl1_b = GL1Element.random_element(m, n, p, q)
@@ -296,7 +296,7 @@ def peiffer_identity():
     LHS = (gl1_a.feedback()).act_on(gl1_b)
     RHS = gl1_a * gl1_b * gl1_a.inv()
 
-    Zeros = torch.zeros((n+p, n+q))
+    Zeros = torch.zeros((n+p, n+q)).to(device)
     Identity_gl1 = gl1_a * (gl1_a.inv())
     # print(Identity_gl1.matrix)
 
@@ -305,6 +305,6 @@ def peiffer_identity():
     assert torch.allclose(LHS.matrix, RHS.matrix, atol=0.001)
 
 if __name__ == "__main__":
-    tau_morphism()
-    equivariance()
-    peiffer_identity()
+    test_tau_morphism()
+    test_equivariance()
+    test_peiffer_identity()

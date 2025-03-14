@@ -10,7 +10,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # - just time-benchmark horizontal_first_aggregate
 #    - [x] eager CPU 0.0011, 0.0008, 0.0014 seconds 
-               # GPU 0.110, 0.112, 0.113 seconds
+               # GPU 0.110, 0.112, 0.113 seconds 
 #    - [x] torch.compile CPU 0.001 seconds
                # GPU 0.003 seconds
 #    - [x] associative scan

@@ -277,7 +277,7 @@ class GL1Element:
 
         return GL1Element(n, p, q, matrix)
 
-def equivariance():
+def test_equivariance():
 
     n, p, q = 2, 1, 1
     gl0 = GL0Element.random_element(n, p, q)
@@ -293,7 +293,7 @@ def equivariance():
     assert np.allclose(LHS.tuple[0], RHS.tuple[0])
     assert np.allclose(LHS.tuple[1], RHS.tuple[1])
 
-def tau_morphism():
+def test_tau_morphism():
     n, p, q = 2, 1, 1
     gl1_a = GL1Element.random_element(n, p, q)
     gl1_b = GL1Element.random_element(n, p, q)
@@ -309,7 +309,7 @@ def tau_morphism():
     assert np.array_equal(feedback_product.tuple[0], composed_feedback.tuple[0]), "Feedback morphism fails for M_V"
     assert np.array_equal(feedback_product.tuple[1], composed_feedback.tuple[1]), "Feedback morphism fails for M_U"
 
-def peiffer_identity():
+def test_peiffer_identity():
     n, p, q = 2, 1, 1
     gl1_a = GL1Element.random_element(n, p, q)
     gl1_b = GL1Element.random_element(n, p, q)
@@ -324,9 +324,9 @@ def peiffer_identity():
     assert np.allclose(LHS.matrix, RHS.matrix)
 
 if __name__ == "__main__":
-    tau_morphism()
-    equivariance()
-    peiffer_identity()
+    test_tau_morphism()
+    test_equivariance()
+    test_peiffer_identity()
 
 # TODO triton
 # TODO mnist
