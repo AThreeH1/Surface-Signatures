@@ -1,6 +1,7 @@
 from imports import *
 from torch._higher_order_ops.associative_scan import associative_scan
-from lifting import from_vector, kernel_gl1
+# from lifting import from_vector, kernel_gl1
+import lifting
 device = "cuda" 
 torch.set_default_dtype(torch.float64)
 
@@ -234,7 +235,7 @@ def scan_aggregate(n, p, q, images, torch_compile: bool = True):
     """
     Easy to import just this function in other files and get the complete aggregate.
     """
-    elems = to_tuple(n, p, q, images, from_vector, kernel_gl1)
+    elems = to_tuple(n, p, q, images, lifting.from_vector, lifting.kernel_gl1)
     if torch_compile:
         compiled_function = torch.compile(cal_aggregate)
     else:
@@ -249,7 +250,7 @@ def scan_aggregate_benchmark(n, p, q, images, runs, torch_compile: bool = True):
     To benchmark associative scan method
     """
 
-    elems = to_tuple(n, p, q, images, from_vector, kernel_gl1)
+    elems = to_tuple(n, p, q, images, lifting.from_vector, lifting.kernel_gl1)
     print("in progress...")
     if torch_compile:
         compiled_function = torch.compile(cal_aggregate)
@@ -268,14 +269,14 @@ def scan_aggregate_benchmark(n, p, q, images, runs, torch_compile: bool = True):
     print("Using associative scan in torch - ", f"Average time: {sum(Time)/runs},", f"Final time: {final_time},", f"Torch compile = {torch_compile}")
 
 if __name__ == "__main__":
-    n = 3
-    p = 2
+    n = 3 # TODO test with different values!
+    p = 1
     q = 1
     batch_size = 2
     torch.manual_seed(42)
     images = torch.rand(batch_size, 5, 5).to(device)
     print(images)
-    elements = to_tuple(n, p, q, images, from_vector, kernel_gl1)
+    elements = to_tuple(n, p, q, images, lifting.from_vector, lifting.kernel_gl1)
     # print('elements=', elements, len(elements), [elements[i].shape for i in range(len(elements))])
     # xxx
 
