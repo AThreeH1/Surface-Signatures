@@ -64,6 +64,40 @@ def horizontal_first_aggregate(ImageBatch, a=None, b=None):
     return Aggregate
 
 
+@torch.compile
+def vertical_first_aggregate(ImageBatch, a=None, b=None):
+    """
+    Computes the vertical-first aggregate for a batch of images.
+    Args:
+        ImageBatch: Batch of images (type GridOf2Cells)
+        a: Rows up to which the aggregation is performed
+        b: Columns up to which the aggregation is performed
+ 
+    Returns:
+        Batch of GridOf2Cells of shape (batch_size, 1, 1)
+    """
+    batch_size = ImageBatch[0,0].value.matrix.shape[0]
+ 
+    if a is None and b is None:
+        a = ImageBatch.rows
+        b = ImageBatch.cols
+ 
+    Aggregate_vertical = GridOf2Cells(batch_size, 1, b)
+ 
+    for i in range(b):
+        Aggregate_temp = ImageBatch[a - 1, i]
+        for j in range(1, a):
+            Aggregate_temp = Aggregate_temp.vertical_compose_with(ImageBatch[a - (j + 1), i])
+        Aggregate_vertical[0, i] = Aggregate_temp.clone()
+ 
+    Aggregate = GridOf2Cells(batch_size, 1, 1)
+    temp_value = Aggregate_vertical[0, 0]
+ 
+    for i in range(1, b):
+        temp_value = temp_value.horizontal_compose_with(Aggregate_vertical[0, i])
+ 
+    Aggregate[0, 0] = temp_value.clone()
+    return Aggregate
 
 def loop_aggregate(n, p, q, images, torch_compile: bool = True):
     """
@@ -113,7 +147,7 @@ if __name__ == "__main__":
     
     # Generate a batch of random images
     images = torch.rand(batch_size, m, m)
-
+    
     # Map the batch of images
     Images = to_custom_matrix(n, p, q, images, from_vector, kernel_gl1)  # Assuming to_custom_matrix is batch-compatible
     
@@ -131,7 +165,7 @@ if __name__ == "__main__":
 
     # print("Loop = ", Aggregate_1[0,0].value.matrix[0])
     # print("Horizontal first aggregate (Batch):")
-    print(Aggregate_1[0, 0].value.matrix)
+    print("Aggregate loop OOP = ", Aggregate_1[0, 0].value.matrix)
     
     # Compute vertical-first aggregate for the batch
     Aggregate_2 = vertical_first_aggregate(Images)
@@ -145,7 +179,7 @@ if __name__ == "__main__":
             Aggregate_2[0, 0].value.matrix
         ), f"Mismatch in aggregates for Image {i + 1}"
     
-    print("Aggregates match for all images in the batch.")
+    print("Aggregates match for all images in the batch.") 
     
     # Manual computation for the first image in the batch
     # print("H first manual (First Image in Batch):")

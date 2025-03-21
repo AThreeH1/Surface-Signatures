@@ -143,6 +143,102 @@ def to_tuple(n, p, q, image):
     
     return (up_v, up_u, down_v, down_u, left_v, left_u, right_v, right_u, face_tensor)
 
+@partial(jax.jit, static_argnames=('n', 'p', 'q'))
+def to_tuple_vectorized(n, p, q, image):
+    # image: (B, rows, cols)
+    B, rows, cols = image.shape
+    h, w = rows - 1, cols - 1  # grid dimensions
+
+    # --- Nested vmap helper for from_vector calls
+    # from_vector expects scalar (or (B,) vector) inputs; we use a double vmap for grid cells.
+    fv_func = lambda xt, xs: from_vector(n, p, q, xt, xs)
+    double_vmap = jax.vmap(jax.vmap(fv_func, in_axes=(0, 0)), in_axes=(0, 0))
+    
+    # --- Down edges: for each grid cell (i, j), use image[:, i+1, j] and image[:, i+1, j+1]
+    down_v, down_u = double_vmap(image[:, 1:, :w], image[:, 1:, 1:])  # shape: (B, h, w, n+p, n+p)
+    
+    # --- Right edges: for each grid cell (i, j), use image[:, i+1, j+1] and image[:, i, j+1]
+    right_v, right_u = double_vmap(image[:, 1:, 1:], image[:, :h, 1:])  # shape: (B, h, w, n+p, n+p)
+    
+    # --- Up edges:
+    # For the top row (grid row 0), compute directly.
+    up_direct_v, up_direct_u = jax.vmap(fv_func, in_axes=(0, 0))(
+        image[:, 0, :w],   # shape: (B, w)
+        image[:, 0, 1:]    # shape: (B, w)
+    )
+    # up_direct_*: shape (B, w, n+p, n+p). Expand to (B, 1, w, n+p, n+p)
+    up_direct_v = up_direct_v[:, None, :, :, :]
+    up_direct_u = up_direct_u[:, None, :, :, :]
+    # For subsequent rows, use the down edge from the previous grid row.
+    up_rest_v = down_v[:, :h-1, :, :, :]
+    up_rest_u = down_u[:, :h-1, :, :, :]
+    # Concatenate along the grid row dimension (axis=1)
+    up_v = jnp.concatenate([up_direct_v, up_rest_v], axis=1)  # shape: (B, h, w, n+p, n+p)
+    up_u = jnp.concatenate([up_direct_u, up_rest_u], axis=1)
+    
+    # --- Left edges:
+    # For the left column, compute directly.
+    left_direct_v, left_direct_u = jax.vmap(fv_func, in_axes=(0, 0))(
+        image[:, 1:, 0],   # shape: (B, h)
+        image[:, :h, 0]    # shape: (B, h)
+    )
+    # left_direct_*: shape (B, h, n+p, n+p). Expand to (B, h, 1, n+p, n+p)
+    left_direct_v = left_direct_v[:, :, None, :, :]
+    left_direct_u = left_direct_u[:, :, None, :, :]
+    # For subsequent columns, left edge equals right edge from previous column.
+    left_rest_v = right_v[:, :, :w-1, :, :]
+    left_rest_u = right_u[:, :, :w-1, :, :]
+    # Concatenate along the grid column dimension (axis=2)
+    left_v = jnp.concatenate([left_direct_v, left_rest_v], axis=2)  # shape: (B, h, w, n+p, n+p)
+    left_u = jnp.concatenate([left_direct_u, left_rest_u], axis=2)
+    
+    # --- Kernel tensor N:
+    # p1 = image[:, :h, :w], p2 = image[:, 1:, :w], p3 = image[:, 1:, 1:], p4 = image[:, :h, 1:]
+    double_kernel = jax.vmap(jax.vmap(
+        lambda a, b, c, d: kernel_gl1(a, b, c, d, p, q),
+        in_axes=(0, 0, 0, 0)
+    ), in_axes=(0, 0, 0, 0))
+    N_tensor = double_kernel(image[:, :h, :w],
+                             image[:, 1:, :w],
+                             image[:, 1:, 1:],
+                             image[:, :h, 1:])  # shape: (B, h, w, p, q)
+    
+    # --- Batched edge multiplication:
+    inv_up_v = jnp.linalg.inv(up_v)
+    inv_left_v = jnp.linalg.inv(left_v)
+    Edges_mul_v = jnp.matmul(jnp.matmul(jnp.matmul(down_v, right_v), inv_up_v), inv_left_v)
+    
+    inv_up_u = jnp.linalg.inv(up_u)
+    inv_left_u = jnp.linalg.inv(left_u)
+    Edges_mul_u = jnp.matmul(jnp.matmul(jnp.matmul(down_u, right_u), inv_up_u), inv_left_u)
+    Edges_mul = (Edges_mul_v, Edges_mul_u)
+    
+    # --- Compute face tensor via reverse_feedback.
+    face_tensor = reverse_feedback(n, Edges_mul, N_tensor)  # expected shape: (B, h, w, n+p, n+q)
+    
+    # --- Rearranging dimensions: from (B, h, w, ...) to (h, w, B, ...)
+    def batch_to_grid(t):
+        # If t has shape (B, h, w, a, b) then transpose to (h, w, B, a, b)
+        return jnp.transpose(t, (1, 2, 0, 3, 4))
+    
+    def batch_to_grid_N(t):
+        # For N_tensor: (B, h, w, p, q) -> (h, w, B, p, q)
+        return jnp.transpose(t, (1, 2, 0, 3, 4))
+    
+    up_v = batch_to_grid(up_v)
+    up_u = batch_to_grid(up_u)
+    down_v = batch_to_grid(down_v)
+    down_u = batch_to_grid(down_u)
+    left_v = batch_to_grid(left_v)
+    left_u = batch_to_grid(left_u)
+    right_v = batch_to_grid(right_v)
+    right_u = batch_to_grid(right_u)
+    face_tensor = batch_to_grid(face_tensor)
+    N_tensor = batch_to_grid_N(N_tensor)
+    
+    # Return the tuple with grid dims first: (h, w, B, ...)
+    return (up_v, up_u, down_v, down_u, left_v, left_u, right_v, right_u, face_tensor)
+
 @partial(jax.jit, static_argnames=('n',))
 def gl1_mul_tensor(mat_left, mat_right, n):
     I = jnp.eye(n)
@@ -270,9 +366,22 @@ def jax_scan_aggregate_benchmark(n, p, q, images, runs, jax_jit: bool = True):
 if __name__ == "__main__":
     batch_size = 2
     torch.manual_seed(42)
-    images_torch = torch.rand(batch_size, 5, 5)
-    image = jnp.asarray(images_torch.numpy())
-    print(image)
+    images_torch = torch.rand(batch_size, 2000, 2000)
+    image = jnp.asarray(images_torch.numpy()) 
     n, p, q = 2, 1, 1
-    aggregate = jax_scan_aggregate(n, p, q, image)
-    print(aggregate[-1][0][-1])
+    A = time.time()
+    # to_tuple_loop = to_tuple(n, p, q, image)
+    B = time.time()
+    to_tuple_vector = to_tuple_vectorized(n, p, q, image)
+    C = time.time()
+    torch.manual_seed(41)
+    images_torch = torch.rand(batch_size, 2000, 2000)
+    image = jnp.asarray(images_torch.numpy())
+    D = time.time()
+    to_tuple_vector = to_tuple_vectorized(n, p, q, image)
+    E = time.time()
+    print("For looped to tuple = ", B-A, "For parallel to tuple = ", C-B, "for par = ", E - D)
+    # print((to_tuple_loop[-1][0][-1]))
+    # print((to_tuple_vector[-1][0][-1]))f 
+    # aggregate = jax_scan_aggregate(n, p, q, image)
+    # print(aggregate[-1][0][-1])

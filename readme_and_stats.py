@@ -46,6 +46,7 @@ PLEASE RUN THIS README FILE FOR STATISTICS AND BENCHMARKING
 import torch
 import jax
 import jax.numpy as jnp
+import aggregate_using_scan
 from aggregate_using_scan import scan_aggregate_benchmark, scan_aggregate
 from aggregate_torch import loop_aggregate_benchmark, loop_aggregate
 from aggregate_jax import jax_scan_aggregate, jax_scan_aggregate_benchmark
@@ -58,27 +59,29 @@ q = 1
 batch_size = 1
 
 # Higher numbers below will benefit more from associative scan
-image_width = 200
-image_height = 200
+image_width = 5
+image_height = 5
 
 torch.manual_seed(42)
 images = torch.rand(batch_size, image_height, image_width, device = device, dtype = torch.float64)
 images_numpy = images.detach().cpu().numpy()  
 images_jax = jax.device_put(jnp.array(images_numpy))
 
+aggrgate_function_loop = aggregate_using_scan.loop_aggregate(n, p, q, images)
 aggregate_using_scan = scan_aggregate(n, p, q, images, torch_compile = False)
-# aggregate_using_loop = loop_aggregate(n, p, q, images, torch_compile = False)
-aggregate_using_scan_jax = jax_scan_aggregate(n, p, q, images_jax, jax_jit = False)
+aggregate_using_loop = loop_aggregate(n, p, q, images, torch_compile = False)
+# aggregate_using_scan_jax = jax_scan_aggregate(n, p, q, images_jax, jax_jit = True)
 print("aggregate_using_scan = ", aggregate_using_scan[-1][0][-1])
-print("aggregate_using_scan_JAX = ",aggregate_using_scan_jax[-1][0][-1])
-# print("aggregate_using_loop = ",aggregate_using_loop[0,0].value.matrix)
+# print("aggregate_using_scan_JAX = ",aggregate_using_scan_jax[-1][0][-1])
+print("aggregate_using_loop = ",aggregate_using_loop[0,0].value.matrix)
+print("aggrgate_function_loop = ", aggrgate_function_loop[-1][0][-1])
 
 # assert torch.allclose(aggregate_using_scan[-1][0][-1], aggregate_using_loop[0,0].value.matrix, atol = 0.1)
 
-
+xxx
 runs = 200
 # Functions below auto prints benchmarks. Final time is time required for the 100th run.
-scan_aggregate_benchmark(n, p, q, images, runs=runs, torch_compile=True)
+# scan_aggregate_benchmark(n, p, q, images, runs=runs, torch_compile=True)
 # loop_aggregate_benchmark(n, p, q, images, runs=runs, torch_compile=True)
 jax_scan_aggregate_benchmark(n, p, q, images_jax, runs=runs, jax_jit=True)
 # Associative scan internally also has torch compile - which is not disabled.
