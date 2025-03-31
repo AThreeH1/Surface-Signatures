@@ -7,48 +7,6 @@ import time
 
 jax.config.update("jax_enable_x64", True)
 
-@partial(jax.jit, static_argnames=('n', 'p', 'q'))
-def from_vector(n, p, q, Xt, Xs):
-    # Compute the batch of differences dX
-    dX = Xs - Xt  # shape: (batch, ...)
-    dX = dX.reshape((-1, 1, 1))  # shape: (batch, 1, 1)
-    
-    ### Build block P (n x n)
-    powers = jnp.arange(1, n+1).reshape(1, n)  # shape (1, n)
-    dX_flat = dX.reshape((-1, 1))  # shape (batch, 1)
-    diag_vals = jnp.exp(dX_flat ** powers)  # shape (batch, n)
-    # Create a batch of diagonal matrices
-    P = jnp.zeros((diag_vals.shape[0], n, n))
-    P = P.at[:, jnp.arange(n), jnp.arange(n)].set(diag_vals)
-    
-    ### Build block R (p x n)
-    dX_power = dX_flat ** jnp.arange(1, n+1).reshape(1, n)  # shape (batch, n)
-    dX_power = jnp.expand_dims(dX_power, 1)  # shape (batch, 1, n)
-    row_idx = jnp.arange(p).reshape(p, 1)
-    even_mask = (row_idx % 2 == 0).astype(float).reshape(1, p, 1)
-    R = even_mask * jnp.sin(dX_power) + (1 - even_mask) * jnp.cos(dX_power)
-    
-    ### Bottom-right block S (p x p)
-    S = jnp.eye(p)[jnp.newaxis, :, :].repeat(dX.shape[0], axis=0)
-    
-    ### Assemble fV
-    zeros_np = jnp.zeros((dX.shape[0], n, p))
-    top_fV = jnp.concatenate([P, zeros_np], axis=2)
-    bottom_fV = jnp.concatenate([R, S], axis=2)
-    fV = jnp.concatenate([top_fV, bottom_fV], axis=1)
-    
-    ### Build fU
-    row_factors = jnp.arange(1, n+1).reshape(1, n, 1)
-    col_exponents = jnp.arange(1, q+1).reshape(1, 1, q)
-    B = row_factors * (dX ** col_exponents)
-    D = jnp.eye(q)[jnp.newaxis, :, :].repeat(dX.shape[0], axis=0)
-    zeros_qn = jnp.zeros((dX.shape[0], q, n))
-    top_fU = jnp.concatenate([P, B], axis=2)
-    bottom_fU = jnp.concatenate([zeros_qn, D], axis=2)
-    fU = jnp.concatenate([top_fU, bottom_fU], axis=1)
-    
-    return (fV, fU)
-
 @partial(jax.jit, static_argnames=('p', 'q'))
 def kernel_gl1(p1, p2, p3, p4, p, q):
     Y = p1 + p3 - p2 - p4  # shape: (batch, ...)
