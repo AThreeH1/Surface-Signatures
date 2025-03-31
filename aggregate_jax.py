@@ -7,9 +7,55 @@ import time
 
 jax.config.update("jax_enable_x64", True)
 
+@partial(jax.jit, static_argnames=('n', 'p', 'q'))
+def from_vector(n, p, q, Xt, Xs, params):
+    # Unpack learnable parameters
+    a, b, c, d = params['a'], params['b'], params['c'], params['d']
+
+    # Compute the batch of differences dX
+    dX = Xs - Xt  # shape: (batch, ...)
+    dX = dX.reshape((-1, 1, 1))  # shape: (batch, 1, 1)
+    
+    ### Build block P (n x n)
+    powers = jnp.arange(1, n+1).reshape(1, n)  # shape (1, n)
+    dX_flat = dX.reshape((-1, 1))  # shape (batch, 1)
+    diag_vals = a* jnp.exp(dX_flat ** powers)  # shape (batch, n)
+    # Create a batch of diagonal matrices
+    P = jnp.zeros((diag_vals.shape[0], n, n))
+    P = P.at[:, jnp.arange(n), jnp.arange(n)].set(diag_vals)
+    
+    ### Build block R (p x n)
+    dX_power = dX_flat ** jnp.arange(1, n+1).reshape(1, n)  # shape (batch, n)
+    dX_power = jnp.expand_dims(dX_power, 1)  # shape (batch, 1, n)
+    row_idx = jnp.arange(p).reshape(p, 1)
+    even_mask = (row_idx % 2 == 0).astype(float).reshape(1, p, 1)
+    R = even_mask * (b * jnp.sin(dX_power)) + (1 - even_mask) * (c * jnp.cos(dX_power))
+    
+    ### Bottom-right block S (p x p)
+    S = jnp.eye(p)[jnp.newaxis, :, :].repeat(dX.shape[0], axis=0)
+    
+    ### Assemble fV
+    zeros_np = jnp.zeros((dX.shape[0], n, p))
+    top_fV = jnp.concatenate([P, zeros_np], axis=2)
+    bottom_fV = jnp.concatenate([R, S], axis=2)
+    fV = jnp.concatenate([top_fV, bottom_fV], axis=1)
+    
+    ### Build fU
+    row_factors = jnp.arange(1, n+1).reshape(1, n, 1)
+    col_exponents = jnp.arange(1, q+1).reshape(1, 1, q)
+    B = d * row_factors * (dX ** col_exponents)
+    D = jnp.eye(q)[jnp.newaxis, :, :].repeat(dX.shape[0], axis=0)
+    zeros_qn = jnp.zeros((dX.shape[0], q, n))
+    top_fU = jnp.concatenate([P, B], axis=2)
+    bottom_fU = jnp.concatenate([zeros_qn, D], axis=2)
+    fU = jnp.concatenate([top_fU, bottom_fU], axis=1)
+    
+    return (fV, fU)
+
 @partial(jax.jit, static_argnames=('p', 'q'))
-def kernel_gl1(p1, p2, p3, p4, p, q):
-    Y = p1 + p3 - p2 - p4  # shape: (batch, ...)
+def kernel_gl1(p1, p2, p3, p4, p, q, params):
+    e = params['e']
+    Y = e * (p1 + p3 - p2 - p4)  # shape: (batch, ...)
     Y = Y.reshape((-1, 1, 1))
     row_mult = jnp.arange(1, p+1).reshape(1, p, 1)
     col_exp = jnp.arange(1, q+1).reshape(1, 1, q)
@@ -29,7 +75,7 @@ def reverse_feedback(n, tuple_edges, N):
     return result_matrix
 
 @partial(jax.jit, static_argnames=('n', 'p', 'q'))
-def to_tuple(n, p, q, image):
+def to_tuple(n, p, q, image, params):
     batch_size, rows, cols = image.shape
     R_dim = rows - 1
     C_dim = cols - 1
@@ -46,28 +92,28 @@ def to_tuple(n, p, q, image):
         for j in range(C_dim):
             # Compute up edge
             if i == 0:
-                up[i][j] = from_vector(n, p, q, image[:, i, j], image[:, i, j+1])
+                up[i][j] = from_vector(n, p, q, image[:, i, j], image[:, i, j+1], params)
             else:
                 up[i][j] = down[i-1][j]
             
             # Compute left edge
             if j == 0:
-                left[i][j] = from_vector(n, p, q, image[:, i+1, j], image[:, i, j])
+                left[i][j] = from_vector(n, p, q, image[:, i+1, j], image[:, i, j], params)
             else:
                 left[i][j] = right[i][j-1]
             
             # Compute down edge
-            down[i][j] = from_vector(n, p, q, image[:, i+1, j], image[:, i+1, j+1])
+            down[i][j] = from_vector(n, p, q, image[:, i+1, j], image[:, i+1, j+1], params)
             
             # Compute right edge
-            right[i][j] = from_vector(n, p, q, image[:, i+1, j+1], image[:, i, j+1])
+            right[i][j] = from_vector(n, p, q, image[:, i+1, j+1], image[:, i, j+1], params)
             
             # Compute N
             p1 = image[:, i, j]
             p2 = image[:, i+1, j]
             p3 = image[:, i+1, j+1]
             p4 = image[:, i, j+1]
-            N[i][j] = kernel_gl1(p1, p2, p3, p4, p, q)
+            N[i][j] = kernel_gl1(p1, p2, p3, p4, p, q, params)
     
     # Stack grids into tensors for the “edge” components
     def stack(grid):
@@ -102,14 +148,14 @@ def to_tuple(n, p, q, image):
     return (up_v, up_u, down_v, down_u, left_v, left_u, right_v, right_u, face_tensor)
 
 @partial(jax.jit, static_argnames=('n', 'p', 'q'))
-def to_tuple_vectorized(n, p, q, image):
+def to_tuple_vectorized(n, p, q, image, params):
     # image: (B, rows, cols)
     B, rows, cols = image.shape
     h, w = rows - 1, cols - 1  # grid dimensions
 
     # --- Nested vmap helper for from_vector calls
     # from_vector expects scalar (or (B,) vector) inputs; we use a double vmap for grid cells.
-    fv_func = lambda xt, xs: from_vector(n, p, q, xt, xs)
+    fv_func = lambda xt, xs: from_vector(n, p, q, xt, xs, params)
     double_vmap = jax.vmap(jax.vmap(fv_func, in_axes=(0, 0)), in_axes=(0, 0))
     
     # --- Down edges: for each grid cell (i, j), use image[:, i+1, j] and image[:, i+1, j+1]
@@ -153,7 +199,7 @@ def to_tuple_vectorized(n, p, q, image):
     # --- Kernel tensor N:
     # p1 = image[:, :h, :w], p2 = image[:, 1:, :w], p3 = image[:, 1:, 1:], p4 = image[:, :h, 1:]
     double_kernel = jax.vmap(jax.vmap(
-        lambda a, b, c, d: kernel_gl1(a, b, c, d, p, q),
+        lambda a, b, c, d: kernel_gl1(a, b, c, d, p, q, params),
         in_axes=(0, 0, 0, 0)
     ), in_axes=(0, 0, 0, 0))
     N_tensor = double_kernel(image[:, :h, :w],
@@ -282,10 +328,10 @@ def cal_aggregate(elements, n):
 
     return aggregated
 
-def jax_scan_aggregate(n, p, q, images, jax_jit: bool = True):
+def jax_scan_aggregate(n, p, q, images, params, jax_jit: bool = True):
 
     # Each component has shape (rows, cols, batch, ...)
-    up_v, up_u, down_v, down_u, left_v, left_u, right_v, right_u, face_tensor = to_tuple(n, p, q, images)
+    up_v, up_u, down_v, down_u, left_v, left_u, right_v, right_u, face_tensor = to_tuple_vectorized(n, p, q, images, params)
     elements = (up_v, up_u, down_v, down_u, left_v, left_u, right_v, right_u, face_tensor)
 
     if jax_jit:
@@ -297,9 +343,9 @@ def jax_scan_aggregate(n, p, q, images, jax_jit: bool = True):
 
     return aggregate 
 
-def jax_scan_aggregate_benchmark(n, p, q, images, runs, jax_jit: bool = True):
+def jax_scan_aggregate_benchmark(n, p, q, images, params, runs, jax_jit: bool = True):
 
-    up_v, up_u, down_v, down_u, left_v, left_u, right_v, right_u, face_tensor = to_tuple(n, p, q, images)
+    up_v, up_u, down_v, down_u, left_v, left_u, right_v, right_u, face_tensor = to_tuple_vectorized(n, p, q, images, params)
     elements = (up_v, up_u, down_v, down_u, left_v, left_u, right_v, right_u, face_tensor)
     # Shape (rows, cols, batch, ...)
 
@@ -323,6 +369,13 @@ def jax_scan_aggregate_benchmark(n, p, q, images, runs, jax_jit: bool = True):
 
 if __name__ == "__main__":
     batch_size = 2
+    params = {
+    'a': jnp.array(1.0),
+    'b': jnp.array(1.0),
+    'c': jnp.array(1.0),
+    'd': jnp.array(1.0), 
+    'e': jnp.array(1.0)
+    }
     torch.manual_seed(42)
     images_torch = torch.rand(batch_size, 2000, 2000)
     image = jnp.asarray(images_torch.numpy()) 
@@ -330,13 +383,13 @@ if __name__ == "__main__":
     A = time.time()
     # to_tuple_loop = to_tuple(n, p, q, image)
     B = time.time()
-    to_tuple_vector = to_tuple_vectorized(n, p, q, image)
+    to_tuple_vector = to_tuple_vectorized(n, p, q, image, params)
     C = time.time()
     torch.manual_seed(41)
     images_torch = torch.rand(batch_size, 2000, 2000)
     image = jnp.asarray(images_torch.numpy())
     D = time.time()
-    to_tuple_vector = to_tuple_vectorized(n, p, q, image)
+    to_tuple_vector = to_tuple_vectorized(n, p, q, image, params)
     E = time.time()
     print("For looped to tuple = ", B-A, "For parallel to tuple = ", C-B, "for par = ", E - D)
     # print((to_tuple_loop[-1][0][-1]))

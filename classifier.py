@@ -1,156 +1,169 @@
 from imports import *
-from aggregate_torch import horizontal_first_aggregate
-from custom_matrix_torch import to_custom_matrix
-from gl0_and_gl1_torch import GL0Element, GL1Element
+from aggregate_jax import jax_scan_aggregate
+from torchvision.datasets import MNIST
 
 wandb.login(key='7e169996e30d15f253a5f1d92ef090f2f3b948c4')
 
 class MNISTClassifier(pl.LightningModule):
-    def __init__(self, from_vector, kernel_gl1, input_size=9, num_classes=10):
-        super(MNISTClassifier, self).__init__()
+    def __init__(self, n, p, q, jax_scan_aggregate, lr, batch_size):
+        """
+        Args:
+            n, p, q: parameters for your JAX function.
+            jax_params: parameters for the JAX aggregation (a, b, c, d).
+            jax_scan_aggregate: external JAX function to compute aggregated outputs.
+            lr: learning rate.
+            batch_size: batch size for data loaders.
+        """
+        super().__init__()
+        self.n = n
+        self.p = p
+        self.q = q
+        self.jax_scan_aggregate = jax_scan_aggregate
+        self.lr = lr
+        self.batch_size = batch_size
+
+        self.a = nn.Parameter(torch.tensor(1.0, dtype=torch.float32))
+        self.b = nn.Parameter(torch.tensor(1.0, dtype=torch.float32))
+        self.c = nn.Parameter(torch.tensor(1.0, dtype=torch.float32))
+        self.d = nn.Parameter(torch.tensor(1.0, dtype=torch.float32))
+        self.e = nn.Parameter(torch.tensor(1.0, dtype=torch.float32))
+
+        self.feature_size = int((n+p)*(n+q))
         
-        self.from_vector = from_vector
-        self.kernel_gl1 = kernel_gl1
-        self.model = nn.Sequential(
-            nn.Linear(input_size, num_classes)
-            # nn.Linear(64, 32)
-            # nn.Linear(32, num_classes)
+        # Define the feed forward network:
+        self.ffn = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(self.feature_size, 16),
+            nn.ReLU(),
+            nn.Linear(16, 10)
         )
-        self.accuracy = torchmetrics.Accuracy(task="multiclass", num_classes=10)
+
+        self.loss_fn = nn.CrossEntropyLoss()
 
     def forward(self, x):
-        x = F.relu(self.model(x))
-        # x = F.relu(self.fc2(x))
-        # x = self.fc3(x)
-        return x
+        """
+        x: input batch of MNIST images (B, 1, 28, 28)
+        """
+
+        x = x.squeeze(1)  # Now shape (B, 28, 28)
+
+        # Convert Torch tensor to NumPy array and then to JAX array
+        x_np = x.cpu().numpy()
+        x_jax = jax.device_put(jnp.array(x_np))
+        
+        params = {
+            'a': jnp.array(self.a.item()),
+            'b': jnp.array(self.b.item()),
+            'c': jnp.array(self.c.item()),
+            'd': jnp.array(self.d.item()),
+            'e': jnp.array(self.e.item())
+        }
+
+
+        agg = self.jax_scan_aggregate(self.n, self.p, self.q, x_jax, params, jax_jit=True)
+        surface_signature_jax = agg[-1][0][-1]
+        feature_np = np.array(surface_signature_jax)
+        surface_signature = torch.tensor(feature_np, dtype=torch.float32, device=x.device)
+        
+        # Pass the flattened feature through the feed forward network.
+        logits = self.ffn(surface_signature)
+        return logits
 
     def training_step(self, batch, batch_idx):
-        images, labels = batch
-        # Assuming horizontal_first_aggregate function is available and batch-compatible
-        print("next")
-        tensor_images = images.squeeze(1)
-        Images = to_custom_matrix(tensor_images, self.from_vector, self.kernel_gl1)
-        print("here here")
-        aggregated_images = horizontal_first_aggregate(Images)  # Batch processing
-        print("x")
-        # Flatten aggregated output (9 elements per image in the batch)
-        x = aggregated_images[0,0].value.matrix.view(9, -1)
-        print("y")
-        # Forward pass
-        logits = self(x.T)
-        loss = F.cross_entropy(logits, labels)
-        
-        # Accuracy
-        acc = self.accuracy(logits, labels)
-        self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True)
-        self.log('train_acc', acc, on_step=True, on_epoch=True, prog_bar=True)
-        
+        x, y = batch
+        logits = self.forward(x)
+        loss = self.loss_fn(logits, y)
+        self.log('train_loss', loss, on_step=True, on_epoch=True)
+        preds = torch.argmax(logits, dim=1)
+        acc = (preds == y).float().mean()
+        self.log("train_acc", acc, on_step=True, on_epoch=True)
         return loss
 
-    # def validation_step(self, batch, batch_idx):
-    #     images, labels = batch
-    #     Images = to_custom_matrix(images.squeeze(1), self.from_vector, self.kernel_gl1)
-    #     aggregated_images = horizontal_first_aggregate(Images)  # Batch processing
-        
-    #     # Flatten aggregated output (9 elements per image in the batch)
-    #     x = aggregated_images[0,0].value.matrix.view(9, -1)
-        
-    #     logits = self(x)
-    #     loss = F.cross_entropy(logits, labels)
-        
-    #     acc = self.accuracy(logits, labels)
-    #     self.log('val_loss', loss)
-    #     self.log('val_acc', acc)
-        
-    #     return loss
+    def validation_step(self, batch, batch_idx):
+        x, y = batch
+        logits = self.forward(x)
+        loss = self.loss_fn(logits, y)
+        preds = torch.argmax(logits, dim=1)
+        acc = (preds == y).float().mean()
+        self.log('val_loss', loss, prog_bar=True)
+        self.log('val_acc', acc, prog_bar=True)
 
     def test_step(self, batch, batch_idx):
-        images, labels = batch
-        # Assuming horizontal_first_aggregate function is available and batch-compatible
-        Images = to_custom_matrix(images.squeeze(1), self.from_vector, self.kernel_gl1)
-        aggregated_images = horizontal_first_aggregate(Images)  # Batch processing
-
-        # Flatten aggregated output (9 elements per image in the batch)
-        x = aggregated_images[0, 0].value.matrix.view(9, -1)
-
-        # Forward pass
-        logits = self(x.T)
-        loss = F.cross_entropy(logits, labels)
-
-        # Accuracy
-        acc = self.accuracy(logits, labels)
+        x, y = batch
+        logits = self.forward(x)
+        loss = self.loss_fn(logits, y)
+        preds = torch.argmax(logits, dim=1)
+        acc = (preds == y).float().mean()
         self.log("test_loss", loss, prog_bar=True)
         self.log("test_acc", acc, prog_bar=True)
 
-        return {"test_loss": loss, "test_acc": acc}
-
-    
     def configure_optimizers(self):
-        optimizer = optim.Adam(self.parameters(), lr=1e-3)
-        return optimizer
+        return optim.Adam(self.parameters(), lr=self.lr)
+
+    @staticmethod
+    def prepare_data():
+        # Download MNIST data (only executed on one process)
+        MNIST(root='./data', train=True, download=True)
+        MNIST(root='./data', train=False, download=True)
+
+    def setup(self, stage=None):
+        # Define transforms for MNIST
+        transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Lambda(lambda x: x.squeeze(0))
+        ])
+        # Load the full training dataset
+        full_dataset = MNIST(root='./data', train=True, transform=transform)
+
+        train_size = int(0.7 * len(full_dataset))
+        val_size = int(0.1 * len(full_dataset))
+        test_size = int(0.2 * len(full_dataset))
+        self.mnist_train, self.mnist_val, self.mnist_test = random_split(full_dataset, [train_size, val_size, test_size])
+
+    def train_dataloader(self):
+        return DataLoader(self.mnist_train, batch_size=self.batch_size, shuffle=True, num_workers=4)
+
+    def val_dataloader(self):
+        return DataLoader(self.mnist_val, batch_size=self.batch_size, shuffle=False, num_workers=4)
+
+    def test_dataloader(self):
+        return DataLoader(self.mnist_test, batch_size=self.batch_size, shuffle=False, num_workers=4)
 
 
-def load_data(batch_size=640):
-    transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
-    dataset = datasets.MNIST(root='data', train=True, download=True, transform=transform)
-    
-    # Perform 80:20 split
-    train_size = int(0.8 * len(dataset))
-    test_size = len(dataset) - train_size
-    train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
+if __name__ == '__main__':
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, num_workers=8, shuffle=True, pin_memory=True, prefetch_factor=2)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, num_workers=8, shuffle=False, pin_memory=True, prefetch_factor=2)
-
-    return train_loader, test_loader
-
-
-if __name__ == "__main__":
-
-    def from_vector(m, Xt, Xs):
-        n, p, q = 2, 1, 1
-        fV = torch.eye(n + p).repeat(m, 1, 1)
-        fU = torch.eye(n + q).repeat(m, 1, 1)
-        dX = Xs - Xt
-
-        fV[:, 0, 0] = fU[:, 0, 0] = torch.exp(dX)
-        fV[:, 1, 1] = fU[:, 1, 1] = torch.exp(dX ** 2)
-        fV[:, 2, 0] = torch.sin(dX)
-        fV[:, 2, 1] = dX ** 5
-        fU[:, 0, 2] = dX ** 3
-        fU[:, 1, 2] = 7 * dX
- 
-        return GL0Element(m, n, p, q, fV, fU)
-
-
-    def kernel_gl1(p1, p2, p3, p4):
-        return (p1+p3-p2-p4).unsqueeze(-1).unsqueeze(-1)
-
-    # Initialize DataLoader
-    train_loader, test_loader = load_data(batch_size=640)
-    
-    # Initialize model
-    model = MNISTClassifier(from_vector, kernel_gl1)
-
-    wandb_logger = WandbLogger(project='SurfaceSignature', log_model="all")
-    wandb_logger.watch(model, log="all", log_freq= 10, log_graph=True)
-
-    # Set up PyTorch Lightning trainer
-    logger = TensorBoardLogger('tb_logs', name='mnist_classifier')
-    trainer = pl.Trainer(
-        max_epochs=10, 
-        devices=1, 
-        accelerator='gpu', 
-        logger=wandb_logger, 
-        enable_progress_bar=True,
-        log_every_n_steps=1
+    # Instantiate the MNIST classifier.
+    model = MNISTClassifier(
+        n=3,
+        p=2,
+        q=2,
+        jax_scan_aggregate=jax_scan_aggregate,
+        lr=0.001,
+        batch_size=64
     )
 
-    # Train the model
-    trainer.fit(model, train_loader)
+    checkpoint_callback = ModelCheckpoint(
+        monitor='val_loss', 
+        dirpath='checkpoints/',  
+        filename='best_model',  
+        save_top_k=1,  
+        mode='min',  
+        save_weights_only=True,  
+    )
 
-    # Test the model
-    test_results = trainer.test(model, test_loader)
-    print(f"Test Results: {test_results}")
+    early_stopping_callback = EarlyStopping(
+        monitor='val_acc',  
+        patience=3,  
+        mode='max',  
+        verbose=True,  
+    )
 
- 
+    trainer = pl.Trainer(
+        max_epochs=10,
+        accelerator="auto",
+        log_every_n_steps=25,
+        callbacks=[checkpoint_callback, early_stopping_callback]
+    )
+
+    trainer.fit(model)
+    trainer.test(model)

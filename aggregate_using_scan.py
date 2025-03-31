@@ -356,7 +356,7 @@ def scan_aggregate(n, p, q, images, torch_compile: bool = True):
     """
     Easy to import just this function in other files and get the complete aggregate.
     """
-    elems = to_tuple(n, p, q, images, lifting.from_vector, lifting.kernel_gl1)
+    elems = to_tuple_vectorized(n, p, q, images, lifting.from_vector, lifting.kernel_gl1)
     if torch_compile:
         compiled_function = torch.compile(cal_aggregate)
     else:
@@ -371,7 +371,7 @@ def scan_aggregate_benchmark(n, p, q, images, runs, torch_compile: bool = True):
     To benchmark associative scan method
     """
 
-    elems = to_tuple(n, p, q, images, lifting.from_vector, lifting.kernel_gl1)
+    elems = to_tuple_vectorized(n, p, q, images, lifting.from_vector, lifting.kernel_gl1)
     print("in progress...")
     if torch_compile:
         compiled_function = torch.compile(cal_aggregate)
