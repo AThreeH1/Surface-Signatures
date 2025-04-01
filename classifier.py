@@ -2,7 +2,7 @@ from imports import *
 from aggregate_jax import jax_scan_aggregate
 from torchvision.datasets import MNIST
 
-wandb.login(key='7e169996e30d15f253a5f1d92ef090f2f3b948c4')
+# wandb.login(key='7e169996e30d15f253a5f1d92ef090f2f3b948c4')
 
 class MNISTClassifier(pl.LightningModule):
     def __init__(self, n, p, q, jax_scan_aggregate, lr, batch_size):
@@ -33,9 +33,11 @@ class MNISTClassifier(pl.LightningModule):
         # Define the feed forward network:
         self.ffn = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(self.feature_size, 16),
+            nn.Linear(self.feature_size, 32),
             nn.ReLU(),
-            nn.Linear(16, 10)
+            # nn.Linear(32, 16),
+            # nn.ReLU(),
+            nn.Linear(32, 10)
         )
 
         self.loss_fn = nn.CrossEntropyLoss()
@@ -62,6 +64,7 @@ class MNISTClassifier(pl.LightningModule):
 
         agg = self.jax_scan_aggregate(self.n, self.p, self.q, x_jax, params, jax_jit=True)
         surface_signature_jax = agg[-1][0][-1]
+        print(params['a'])
         feature_np = np.array(surface_signature_jax)
         surface_signature = torch.tensor(feature_np, dtype=torch.float32, device=x.device)
         
@@ -131,14 +134,14 @@ class MNISTClassifier(pl.LightningModule):
 
 
 if __name__ == '__main__':
-
+    
     # Instantiate the MNIST classifier.
     model = MNISTClassifier(
-        n=3,
-        p=2,
-        q=2,
+        n=5,
+        p=3,
+        q=3,
         jax_scan_aggregate=jax_scan_aggregate,
-        lr=0.001,
+        lr=0.005,
         batch_size=64
     )
 

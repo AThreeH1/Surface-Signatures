@@ -37,3 +37,23 @@ print(result_tuple)
 
 
 # result_tuple = associative_scan(custom_fn, input_tuple, dim=0, combine_mode='pointwise')
+
+
+@partial(jax.jit, static_argnames=('p', 'q'))
+def kernel_gl1(p1, p2, p3, p4, p, q, params):
+    # Now compute Y without the scalar factor.
+    Y = p1 + p3 - p2 - p4  # shape: (batch, ...)
+    Y = Y.reshape((-1, 1, 1))
+    
+    # Create row multipliers (j = 1,...,p)
+    row_mult = jnp.arange(1, p+1).reshape(1, p, 1)
+    # Create column exponents (i = 1,...,q)
+    col_exp = jnp.arange(1, q+1).reshape(1, 1, q)
+    
+    # e is now a vector of length q; reshape to allow broadcasting
+    e_vec = params['e'].reshape(1, 1, q)
+    
+    # Compute N: each element is j * e_i * Y^i.
+    N = row_mult * (e_vec * (Y ** col_exp))
+    return N
+
