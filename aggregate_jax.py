@@ -7,31 +7,139 @@ import time
 
 jax.config.update("jax_enable_x64", True)
 
+# @partial(jax.jit, static_argnames=('n', 'p', 'q'))
+# def from_vector(n, p, q, Xt, Xs, params):
+#     # Unpack learnable parameters
+#     a, b, c, d = params['a'], params['b'], params['c'], params['d']
+
+#     # Compute the batch of differences dX
+#     dX = Xs - Xt  # shape: (batch, ...)
+#     dX = dX.reshape((-1, 1, 1))  # shape: (batch, 1, 1)
+    
+#     ### Build block P (n x n)
+#     powers = jnp.arange(1, n+1).reshape(1, n)  # shape (1, n)
+#     dX_flat = dX.reshape((-1, 1))  # shape (batch, 1)
+#     diag_vals = a* jnp.exp(dX_flat ** powers)  # shape (batch, n)
+#     # Create a batch of diagonal matrices
+#     P = jnp.zeros((diag_vals.shape[0], n, n))
+#     P = P.at[:, jnp.arange(n), jnp.arange(n)].set(diag_vals)
+    
+#     ### Build block R (p x n)
+#     dX_power = dX_flat ** jnp.arange(1, n+1).reshape(1, n)  # shape (batch, n)
+#     dX_power = jnp.expand_dims(dX_power, 1)  # shape (batch, 1, n)
+#     row_idx = jnp.arange(p).reshape(p, 1)
+#     even_mask = (row_idx % 2 == 0).astype(float).reshape(1, p, 1)
+#     R = even_mask * (b * jnp.sin(dX_power)) + (1 - even_mask) * (c * jnp.cos(dX_power))
+    
+#     ### Bottom-right block S (p x p)
+#     S = jnp.eye(p)[jnp.newaxis, :, :].repeat(dX.shape[0], axis=0)
+    
+#     ### Assemble fV
+#     zeros_np = jnp.zeros((dX.shape[0], n, p))
+#     top_fV = jnp.concatenate([P, zeros_np], axis=2)
+#     bottom_fV = jnp.concatenate([R, S], axis=2)
+#     fV = jnp.concatenate([top_fV, bottom_fV], axis=1)
+    
+#     ### Build fU
+#     row_factors = jnp.arange(1, n+1).reshape(1, n, 1)
+#     col_exponents = jnp.arange(1, q+1).reshape(1, 1, q)
+#     B = d * row_factors * (dX ** col_exponents)
+#     D = jnp.eye(q)[jnp.newaxis, :, :].repeat(dX.shape[0], axis=0)
+#     zeros_qn = jnp.zeros((dX.shape[0], q, n))
+#     top_fU = jnp.concatenate([P, B], axis=2)
+#     bottom_fU = jnp.concatenate([zeros_qn, D], axis=2)
+#     fU = jnp.concatenate([top_fU, bottom_fU], axis=1)
+    
+#     return (fV, fU)
+
+# @partial(jax.jit, static_argnames=('p', 'q'))
+# def kernel_gl1(p1, p2, p3, p4, p, q, params):
+#     e = params['e']
+#     Y = e * (p1 + p3 - p2 - p4)  # shape: (batch, ...)
+#     Y = Y.reshape((-1, 1, 1))
+#     row_mult = jnp.arange(1, p+1).reshape(1, p, 1)
+#     col_exp = jnp.arange(1, q+1).reshape(1, 1, q)
+#     N = row_mult * (Y ** col_exp)
+#     return N
+
 @partial(jax.jit, static_argnames=('n', 'p', 'q'))
 def from_vector(n, p, q, Xt, Xs, params):
-    # Unpack learnable parameters
-    a, b, c, d = params['a'], params['b'], params['c'], params['d']
+    """
+    Constructs the matrices fV and fU based on input parameters.
 
-    # Compute the batch of differences dX
+    Args:
+        n, p, q : parameters
+        Xt (array): Reference input points, shape (batch, ...).
+        Xs (array): Target input points, shape (batch, ...).
+        params (dict): Dictionary containing parameters.
+
+    Returns:
+        tuple: (fV, fU)
+            - fV (array): Constructed matrix of shape (batch, n+p, n+p).
+            - fU (array): Constructed matrix of shape (batch, n+q, n+q).
+
+    Matrix Construction:
+        fV = [
+            P   0
+            R   S
+        ]
+
+        fU = [
+            P   B
+            0   D
+        ]
+
+        Where:
+            - **P (n x n)**: Diagonal matrix with elements:
+              P_ii = a_i * exp(dX^i)
+
+            - **R (p x n)**: Alternating sine and cosine terms:
+              R_ij = b_j * sin(dX^j) + b'_j * sin(dX^j) * dX  (even i)
+              R_ij = c_j * cos(dX^j) + c'_j * cos(dX^j) * dX  (odd i)
+
+            - **B (n x q)**: Polynomial dependency on dX:
+              B_ij = d_j * i * j * dX^i + d'_j
+
+            - **S (p x p)**: Identity matrix of size p.
+            - **D (q x q)**: Identity matrix of size q.
+    """
+
+    a = params['a']  # shape (n,)
+    b = params['b']
+    b_prime = params['b_prime']
+    c = params['c']
+    c_prime = params['c_prime']
+    d = params['d']
+    d_prime = params['d_prime']
+
     dX = Xs - Xt  # shape: (batch, ...)
     dX = dX.reshape((-1, 1, 1))  # shape: (batch, 1, 1)
     
-    ### Build block P (n x n)
+    # Build block P (n x n)
     powers = jnp.arange(1, n+1).reshape(1, n)  # shape (1, n)
     dX_flat = dX.reshape((-1, 1))  # shape (batch, 1)
-    diag_vals = a* jnp.exp(dX_flat ** powers)  # shape (batch, n)
-    # Create a batch of diagonal matrices
+    diag_vals = a * jnp.exp(dX_flat ** powers)  # shape (batch, n), with broadcasting over (n,)
     P = jnp.zeros((diag_vals.shape[0], n, n))
     P = P.at[:, jnp.arange(n), jnp.arange(n)].set(diag_vals)
     
-    ### Build block R (p x n)
+    # Build block R (p x n)
     dX_power = dX_flat ** jnp.arange(1, n+1).reshape(1, n)  # shape (batch, n)
     dX_power = jnp.expand_dims(dX_power, 1)  # shape (batch, 1, n)
-    row_idx = jnp.arange(p).reshape(p, 1)
-    even_mask = (row_idx % 2 == 0).astype(float).reshape(1, p, 1)
-    R = even_mask * (b * jnp.sin(dX_power)) + (1 - even_mask) * (c * jnp.cos(dX_power))
+    dX_factor = dX_flat.reshape(-1, 1, 1)  # shape (batch, 1, 1) 
+    dX_factor = jnp.broadcast_to(dX_factor, dX_power.shape)  # Shape (batch, 1, n)
+
+    row_idx = jnp.arange(p).reshape(p, 1)  # shape (p, 1)
+    even_mask = (row_idx % 2 == 0).astype(float).reshape(1, p, 1)  # shape (1, p, 1)
+ 
+    sin_term = jnp.sin(dX_power)
+    even_block = (b * sin_term) + (b_prime * sin_term * dX_factor)
+
+    cos_term = jnp.cos(dX_power)
+    odd_block = (c * cos_term) + (c_prime * cos_term * dX_factor)
+
+    R = even_mask * even_block + (1 - even_mask) * odd_block  # shape (batch, p, n)
     
-    ### Bottom-right block S (p x p)
+    ### Block S (p x p)
     S = jnp.eye(p)[jnp.newaxis, :, :].repeat(dX.shape[0], axis=0)
     
     ### Assemble fV
@@ -40,26 +148,33 @@ def from_vector(n, p, q, Xt, Xs, params):
     bottom_fV = jnp.concatenate([R, S], axis=2)
     fV = jnp.concatenate([top_fV, bottom_fV], axis=1)
     
-    ### Build fU
-    row_factors = jnp.arange(1, n+1).reshape(1, n, 1)
-    col_exponents = jnp.arange(1, q+1).reshape(1, 1, q)
-    B = d * row_factors * (dX ** col_exponents)
+    # Build fU
+    row_idx_B = jnp.arange(1, n+1).reshape(1, n, 1)  # shape (1, n, 1)
+    d = d.reshape(1, n, 1)
+
+    col_idx = jnp.arange(1, q+1).reshape(1, 1, q)       # shape (1, 1, q)
+    B = d * row_idx_B * col_idx * (dX ** row_idx_B) + d_prime.reshape(1, n, 1)
+
     D = jnp.eye(q)[jnp.newaxis, :, :].repeat(dX.shape[0], axis=0)
     zeros_qn = jnp.zeros((dX.shape[0], q, n))
     top_fU = jnp.concatenate([P, B], axis=2)
     bottom_fU = jnp.concatenate([zeros_qn, D], axis=2)
-    fU = jnp.concatenate([top_fU, bottom_fU], axis=1)
     
+    fU = jnp.concatenate([top_fU, bottom_fU], axis=1)
+
     return (fV, fU)
 
 @partial(jax.jit, static_argnames=('p', 'q'))
 def kernel_gl1(p1, p2, p3, p4, p, q, params):
-    e = params['e']
-    Y = e * (p1 + p3 - p2 - p4)  # shape: (batch, ...)
+
+    Y = p1 + p3 - p2 - p4  # shape: (batch, ...)
     Y = Y.reshape((-1, 1, 1))
+    
     row_mult = jnp.arange(1, p+1).reshape(1, p, 1)
     col_exp = jnp.arange(1, q+1).reshape(1, 1, q)
-    N = row_mult * (Y ** col_exp)
+
+    e_vec = params['e'].reshape(1, 1, q)
+    N = row_mult * (e_vec * (Y ** col_exp))
     return N
 
 @partial(jax.jit, static_argnames=('n',))
@@ -369,17 +484,28 @@ def jax_scan_aggregate_benchmark(n, p, q, images, params, runs, jax_jit: bool = 
 
 if __name__ == "__main__":
     batch_size = 2
+    n, p, q = 2, 1, 1
+    # params = {
+    # 'a': jnp.array(1.0),
+    # 'b': jnp.array(1.0),
+    # 'c': jnp.array(1.0),
+    # 'd': jnp.array(1.0), 
+    # 'e': jnp.array(1.0)
+    # }
     params = {
-    'a': jnp.array(1.0),
-    'b': jnp.array(1.0),
-    'c': jnp.array(1.0),
-    'd': jnp.array(1.0), 
-    'e': jnp.array(1.0)
+    'a': jnp.ones((n,)),
+    'b': jnp.ones((n,)),
+    'b_prime': jnp.ones((n,)),
+    'c': jnp.ones((n,)),
+    'c_prime': jnp.ones((n,)),
+    'd': jnp.ones((n,)), 
+    'd_prime': jnp.ones((n,)),
+    'e': jnp.ones((q,))
     }
     torch.manual_seed(42)
     images_torch = torch.rand(batch_size, 2000, 2000)
     image = jnp.asarray(images_torch.numpy()) 
-    n, p, q = 2, 1, 1
+    
     A = time.time()
     # to_tuple_loop = to_tuple(n, p, q, image)
     B = time.time()
@@ -391,7 +517,7 @@ if __name__ == "__main__":
     D = time.time()
     to_tuple_vector = to_tuple_vectorized(n, p, q, image, params)
     E = time.time()
-    print("For looped to tuple = ", B-A, "For parallel to tuple = ", C-B, "for par = ", E - D)
+    print("For looped to tuple = ", B-A, "For parallel to tuple = ", C-B, "for para = ", E - D)
     # print((to_tuple_loop[-1][0][-1]))
     # print((to_tuple_vector[-1][0][-1]))f 
     # aggregate = jax_scan_aggregate(n, p, q, image)
