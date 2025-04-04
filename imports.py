@@ -20,3 +20,11 @@ import jax
 import jax.numpy as jnp
 import jax.dlpack
 
+
+# [] TODO FNN for lifting procedure
+# [] TODO Aggregate the final results using max, min, conv2d
+# [] TODO Update the paper
+# [] TODO Understand JAX 
+# [] TODO Optimize the JAX code - use profiler and evaluate individual functions
+# [] TODO MNIST dataset 90% accuracy
+# [] TODO Create a lecture of GL Crossed modules

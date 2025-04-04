@@ -1,66 +1,177 @@
 import jax
 import jax.numpy as jnp
-from jax import lax
 from functools import partial
-import torch
 import time
+from jax import profiler
+import logging
 
+# Configure JAX
 jax.config.update("jax_enable_x64", True)
 
-# @partial(jax.jit, static_argnames=('n', 'p', 'q'))
-# def from_vector(n, p, q, Xt, Xs, params):
-#     # Unpack learnable parameters
-#     a, b, c, d = params['a'], params['b'], params['c'], params['d']
+import jax
+import jax.numpy as jnp
+from flax import linen as nn
+from functools import partial
 
-#     # Compute the batch of differences dX
-#     dX = Xs - Xt  # shape: (batch, ...)
-#     dX = dX.reshape((-1, 1, 1))  # shape: (batch, 1, 1)
+class FFNs(nn.Module):
+    """Neural network modules for P, R, B matrices and kernel N."""
+    n: int
+    p: int
+    q: int
+    hidden_dim: int = 20  # Default hidden dimension
     
-#     ### Build block P (n x n)
-#     powers = jnp.arange(1, n+1).reshape(1, n)  # shape (1, n)
-#     dX_flat = dX.reshape((-1, 1))  # shape (batch, 1)
-#     diag_vals = a* jnp.exp(dX_flat ** powers)  # shape (batch, n)
-#     # Create a batch of diagonal matrices
-#     P = jnp.zeros((diag_vals.shape[0], n, n))
-#     P = P.at[:, jnp.arange(n), jnp.arange(n)].set(diag_vals)
+    @nn.compact
+    def __call__(self, Xt, Xs):
+        """
+        Compute matrices fV and fU using neural networks.
+        Args:
+            Xt, Xs: Input points, shape (batch, ...)
+        Returns:
+            tuple: (fV, fU) matrices
+        """
+        batch_size = Xt.shape[0]
+        
+        # Prepare input: concatenate Xt and Xs
+        inputs = jnp.concatenate([Xt.reshape(batch_size, -1), 
+                                 Xs.reshape(batch_size, -1)], axis=1)
+        
+        # FFN for P diagonal values
+        p_values = nn.Dense(self.hidden_dim)(inputs)
+        p_values = nn.relu(p_values)
+        p_values = nn.Dense(self.n)(p_values)
+        p_values = jnp.exp(p_values)  # Ensure positive values
+        
+        # FFN for R matrix
+        r_values = nn.Dense(self.hidden_dim)(inputs)
+        r_values = nn.relu(r_values)
+        r_values = nn.Dense(self.p * self.n)(r_values)
+        R = r_values.reshape(batch_size, self.p, self.n)
+        
+        # FFN for B matrix
+        b_values = nn.Dense(self.hidden_dim)(inputs)
+        b_values = nn.relu(b_values)
+        b_values = nn.Dense(self.n * self.q)(b_values)
+        B = b_values.reshape(batch_size, self.n, self.q)
+        
+        # Create P as diagonal matrix
+        P = jnp.zeros((batch_size, self.n, self.n))
+        P = P.at[:, jnp.arange(self.n), jnp.arange(self.n)].set(p_values)
+        
+        # Create identity matrices S and D
+        S = jnp.eye(self.p)[jnp.newaxis, :, :].repeat(batch_size, axis=0)
+        D = jnp.eye(self.q)[jnp.newaxis, :, :].repeat(batch_size, axis=0)
+        
+        # Assemble fV and fU matrices
+        zeros_np = jnp.zeros((batch_size, self.n, self.p))
+        zeros_qn = jnp.zeros((batch_size, self.q, self.n))
+        
+        # Assemble fV
+        top_fV = jnp.concatenate([P, zeros_np], axis=2)
+        bottom_fV = jnp.concatenate([R, S], axis=2)
+        fV = jnp.concatenate([top_fV, bottom_fV], axis=1)
+        
+        # Assemble fU
+        top_fU = jnp.concatenate([P, B], axis=2)
+        bottom_fU = jnp.concatenate([zeros_qn, D], axis=2)
+        fU = jnp.concatenate([top_fU, bottom_fU], axis=1)
+        
+        return fV, fU
     
-#     ### Build block R (p x n)
-#     dX_power = dX_flat ** jnp.arange(1, n+1).reshape(1, n)  # shape (batch, n)
-#     dX_power = jnp.expand_dims(dX_power, 1)  # shape (batch, 1, n)
-#     row_idx = jnp.arange(p).reshape(p, 1)
-#     even_mask = (row_idx % 2 == 0).astype(float).reshape(1, p, 1)
-#     R = even_mask * (b * jnp.sin(dX_power)) + (1 - even_mask) * (c * jnp.cos(dX_power))
-    
-#     ### Bottom-right block S (p x p)
-#     S = jnp.eye(p)[jnp.newaxis, :, :].repeat(dX.shape[0], axis=0)
-    
-#     ### Assemble fV
-#     zeros_np = jnp.zeros((dX.shape[0], n, p))
-#     top_fV = jnp.concatenate([P, zeros_np], axis=2)
-#     bottom_fV = jnp.concatenate([R, S], axis=2)
-#     fV = jnp.concatenate([top_fV, bottom_fV], axis=1)
-    
-#     ### Build fU
-#     row_factors = jnp.arange(1, n+1).reshape(1, n, 1)
-#     col_exponents = jnp.arange(1, q+1).reshape(1, 1, q)
-#     B = d * row_factors * (dX ** col_exponents)
-#     D = jnp.eye(q)[jnp.newaxis, :, :].repeat(dX.shape[0], axis=0)
-#     zeros_qn = jnp.zeros((dX.shape[0], q, n))
-#     top_fU = jnp.concatenate([P, B], axis=2)
-#     bottom_fU = jnp.concatenate([zeros_qn, D], axis=2)
-#     fU = jnp.concatenate([top_fU, bottom_fU], axis=1)
-    
-#     return (fV, fU)
+    @nn.compact
+    def compute_kernel(self, p1, p2, p3, p4):
+        """
+        Compute kernel N using a neural network.
+        Args:
+            p1, p2, p3, p4: Corner points of shape (batch, ...)
+        Returns:
+            N: Kernel matrix of shape (batch, p, q)
+        """
+        batch_size = p1.shape[0]
+        
+        # Concatenate all four points as input
+        inputs = jnp.concatenate([
+            p1.reshape(batch_size, -1),
+            p2.reshape(batch_size, -1),
+            p3.reshape(batch_size, -1),
+            p4.reshape(batch_size, -1)
+        ], axis=1)
+        
+        # FFN for N
+        n_values = nn.Dense(self.hidden_dim)(inputs)
+        n_values = nn.relu(n_values)
+        n_values = nn.Dense(self.p * self.q)(n_values)
+        
+        # Reshape to (batch, p, q)
+        N = n_values.reshape(batch_size, self.p, self.q)
+        
+        return N
 
-# @partial(jax.jit, static_argnames=('p', 'q'))
-# def kernel_gl1(p1, p2, p3, p4, p, q, params):
-#     e = params['e']
-#     Y = e * (p1 + p3 - p2 - p4)  # shape: (batch, ...)
-#     Y = Y.reshape((-1, 1, 1))
-#     row_mult = jnp.arange(1, p+1).reshape(1, p, 1)
-#     col_exp = jnp.arange(1, q+1).reshape(1, 1, q)
-#     N = row_mult * (Y ** col_exp)
-#     return N
+@partial(jax.jit, static_argnames=('n', 'p', 'q'))
+def init_ffn_params(n, p, q, seed=0):
+    """
+    Initialize parameters for both FFN methods.
+    
+    Args:
+        n, p, q: Matrix dimensions
+        seed: Random seed
+        
+    Returns:
+        Dictionary of parameters
+    """
+    model = FFNs(n=n, p=p, q=q)
+    kernel_model = FFNs(n=1, p=p, q=q)  # For kernel computation
+    
+    key = jax.random.PRNGKey(seed)
+    key1, key2 = jax.random.split(key)
+    
+    # Create dummy inputs for initialization
+    batch_size = 1
+    dummy_Xt = jnp.zeros((batch_size, 1))
+    dummy_Xs = jnp.zeros((batch_size, 1))
+    dummy_p1 = jnp.zeros((batch_size, 1))
+    dummy_p2 = jnp.zeros((batch_size, 1))
+    dummy_p3 = jnp.zeros((batch_size, 1))
+    dummy_p4 = jnp.zeros((batch_size, 1))
+    
+    # Initialize parameters for both methods
+    edge_params = model.init(key1, dummy_Xt, dummy_Xs)
+    kernel_params = kernel_model.init(key2, method=FFNs.compute_kernel, 
+                                    p1=dummy_p1, p2=dummy_p2, p3=dummy_p3, p4=dummy_p4)
+    
+    # Combine parameters
+    return {'edge': edge_params, 'kernel': kernel_params}
+
+@partial(jax.jit, static_argnames=('n', 'p', 'q'))
+def from_vector_ffn(n, p, q, Xt, Xs, params):
+    """
+    Constructs matrices fV and fU using neural networks.
+    
+    Args:
+        n, p, q: Matrix dimensions
+        Xt, Xs: Input points (batch, ...)
+        params: Neural network parameters
+        
+    Returns:
+        tuple: (fV, fU) matrices
+    """
+    model = FFNs(n=n, p=p, q=q)
+    return model.apply(params['edge'], Xt, Xs)
+
+@partial(jax.jit, static_argnames=('p', 'q'))
+def kernel_gl1_ffn(p1, p2, p3, p4, p, q, params):
+    """
+    Compute kernel N using neural network.
+    
+    Args:
+        p1, p2, p3, p4: Corner points
+        p, q: Matrix dimensions
+        params: Neural network parameters
+        
+    Returns:
+        N: Kernel matrix
+    """
+    model = FFNs(n=1, p=p, q=q)  # n doesn't matter for kernel computation
+    return model.apply(params['kernel'], method=FFNs.compute_kernel, p1=p1, p2=p2, p3=p3, p4=p4)
 
 @partial(jax.jit, static_argnames=('n', 'p', 'q'))
 def from_vector(n, p, q, Xt, Xs, params):
@@ -270,8 +381,9 @@ def to_tuple_vectorized(n, p, q, image, params):
 
     # --- Nested vmap helper for from_vector calls
     # from_vector expects scalar (or (B,) vector) inputs; we use a double vmap for grid cells.
-    fv_func = lambda xt, xs: from_vector(n, p, q, xt, xs, params)
-    double_vmap = jax.vmap(jax.vmap(fv_func, in_axes=(0, 0)), in_axes=(0, 0))
+    ffn_params = init_ffn_params(n=5, p=3, q=3)
+    fvu_func = lambda xt, xs: from_vector(n, p, q, xt, xs, params)
+    double_vmap = jax.vmap(jax.vmap(fvu_func, in_axes=(0, 0)), in_axes=(0, 0))
     
     # --- Down edges: for each grid cell (i, j), use image[:, i+1, j] and image[:, i+1, j+1]
     down_v, down_u = double_vmap(image[:, 1:, :w], image[:, 1:, 1:])  # shape: (B, h, w, n+p, n+p)
@@ -281,7 +393,7 @@ def to_tuple_vectorized(n, p, q, image, params):
     
     # --- Up edges:
     # For the top row (grid row 0), compute directly.
-    up_direct_v, up_direct_u = jax.vmap(fv_func, in_axes=(0, 0))(
+    up_direct_v, up_direct_u = jax.vmap(fvu_func, in_axes=(0, 0))(
         image[:, 0, :w],   # shape: (B, w)
         image[:, 0, 1:]    # shape: (B, w)
     )
@@ -297,7 +409,7 @@ def to_tuple_vectorized(n, p, q, image, params):
     
     # --- Left edges:
     # For the left column, compute directly.
-    left_direct_v, left_direct_u = jax.vmap(fv_func, in_axes=(0, 0))(
+    left_direct_v, left_direct_u = jax.vmap(fvu_func, in_axes=(0, 0))(
         image[:, 1:, 0],   # shape: (B, h)
         image[:, :h, 0]    # shape: (B, h)
     )
@@ -388,8 +500,14 @@ def horizontal_compose(elem1, elem2, n):
     up1_v, up1_u, down1_v, down1_u, left1_v, left1_u, right1_v, right1_u, val1 = elem1
     up2_v, up2_u, down2_v, down2_u, left2_v, left2_u, right2_v, right2_u, val2 = elem2
     
-    # Compute the action using down edges from elem1 on elem2's face tensor
     acted = down1_v @ val2 @ jnp.linalg.inv(down1_u)
+
+    down1_u_t = jnp.transpose(down1_u, axes=(*range(down1_u.ndim-2), down1_u.ndim-1, down1_u.ndim-2))
+    val2_t = jnp.transpose(val2, axes=(*range(val2.ndim-2), val2.ndim-1, val2.ndim-2))
+    solved = jax.scipy.linalg.solve(down1_u_t, val2_t)
+    solved_t = jnp.transpose(solved, axes=(*range(solved.ndim-2), solved.ndim-1, solved.ndim-2))
+    acted = down1_v @ solved_t
+
     new_face = gl1_mul_tensor(acted, val1, n)
     
     new_up_v = up1_v @ up2_v
@@ -417,8 +535,8 @@ def vertical_compose(elem1, elem2, n):
     return (up2_v, up2_u, down1_v, down1_u,
             new_left_v, new_left_u, new_right_v, new_right_u, new_face)
 
+@partial(jax.jit, static_argnames=('n',))
 def cal_aggregate(elements, n):
-
 
     # Define the horizontal composition function for the associative scan.
     def horizontal_associative_compose(cell1, cell2):
@@ -427,9 +545,8 @@ def cal_aggregate(elements, n):
     # Horizontal associative scan along columns (axis=1)
     horizontal_scanned = jax.lax.associative_scan(horizontal_associative_compose, elements, axis=1)
     # Shape (rows, cols, batch, ...)
-
     # Flip the grid along axis 0 (vertical axis) before vertical scan
-    flipped = jax.tree_map(lambda x: jnp.flip(x, axis=0), horizontal_scanned)
+    flipped = jax.tree_util.tree_map(lambda x: jnp.flip(x, axis=0), horizontal_scanned)
 
     # Define the vertical composition function for the associative scan.
     def vertical_associative_compose(cell1, cell2):
@@ -439,28 +556,38 @@ def cal_aggregate(elements, n):
     flipped_scanned = jax.lax.associative_scan(vertical_associative_compose, flipped, axis=0)
 
     # Flip back along axis 0 to restore the original order.
-    aggregated = jax.tree_map(lambda x: jnp.flip(x, axis=0), flipped_scanned)
+    aggregated = jax.tree_util.tree_map(lambda x: jnp.flip(x, axis=0), flipped_scanned)
 
     return aggregated
 
 def jax_scan_aggregate(n, p, q, images, params, jax_jit: bool = True):
 
     # Each component has shape (rows, cols, batch, ...)
+    calc_time = time.time()
     up_v, up_u, down_v, down_u, left_v, left_u, right_v, right_u, face_tensor = to_tuple_vectorized(n, p, q, images, params)
     elements = (up_v, up_u, down_v, down_u, left_v, left_u, right_v, right_u, face_tensor)
+    for element in elements:
+        element.block_until_ready()
+    final_time = time.time()
+    print("Time to calculate elements = ", final_time - calc_time)
 
     if jax_jit:
         compiled_function = jax.jit(cal_aggregate, static_argnames=('n',))
     else:
         compiled_function = cal_aggregate
 
+    time1 = time.time()
     aggregate = compiled_function(elements, n)
+    for element in aggregate:
+        element.block_until_ready()
+    time2 = time.time()
+    print("Time to calculate asso scan = ", time2 - time1)
 
     return aggregate 
 
-def jax_scan_aggregate_benchmark(n, p, q, images, params, runs, jax_jit: bool = True):
+def jax_scan_aggregate_benchmark(n, p, q, images, runs, jax_jit: bool = True):
 
-    up_v, up_u, down_v, down_u, left_v, left_u, right_v, right_u, face_tensor = to_tuple_vectorized(n, p, q, images, params)
+    up_v, up_u, down_v, down_u, left_v, left_u, right_v, right_u, face_tensor = to_tuple_vectorized(n, p, q, images)
     elements = (up_v, up_u, down_v, down_u, left_v, left_u, right_v, right_u, face_tensor)
     # Shape (rows, cols, batch, ...)
 
@@ -481,17 +608,10 @@ def jax_scan_aggregate_benchmark(n, p, q, images, params, runs, jax_jit: bool = 
    
     print("Using associative scan in JAX - ", f"Average time: {sum(Time)/runs},", f"Final time: {final_time},", f"jax_jit = {jax_jit}")
 
-
 if __name__ == "__main__":
-    batch_size = 2
-    n, p, q = 2, 1, 1
-    # params = {
-    # 'a': jnp.array(1.0),
-    # 'b': jnp.array(1.0),
-    # 'c': jnp.array(1.0),
-    # 'd': jnp.array(1.0), 
-    # 'e': jnp.array(1.0)
-    # }
+    batch_size = 64
+    n, p, q = 5, 3, 3
+
     params = {
     'a': jnp.ones((n,)),
     'b': jnp.ones((n,)),
@@ -502,22 +622,21 @@ if __name__ == "__main__":
     'd_prime': jnp.ones((n,)),
     'e': jnp.ones((q,))
     }
-    torch.manual_seed(42)
-    images_torch = torch.rand(batch_size, 2000, 2000)
-    image = jnp.asarray(images_torch.numpy()) 
+    key = jax.random.PRNGKey(42)
+    image = jax.random.uniform(key, shape=(batch_size, 28, 28))
     
     A = time.time()
     # to_tuple_loop = to_tuple(n, p, q, image)
     B = time.time()
-    to_tuple_vector = to_tuple_vectorized(n, p, q, image, params)
+    agg1 = jax_scan_aggregate(n, p, q, image, params, jax_jit=True)
     C = time.time()
-    torch.manual_seed(41)
-    images_torch = torch.rand(batch_size, 2000, 2000)
-    image = jnp.asarray(images_torch.numpy())
+    key = jax.random.PRNGKey(41)
+    image = jax.random.uniform(key, shape=(batch_size, 28, 28))
     D = time.time()
-    to_tuple_vector = to_tuple_vectorized(n, p, q, image, params)
+    agg2 = jax_scan_aggregate(n, p, q, image, params, jax_jit=True)
     E = time.time()
-    print("For looped to tuple = ", B-A, "For parallel to tuple = ", C-B, "for para = ", E - D)
+    # "For looped to tuple = ", B-A, 
+    print("For aggregate = ", C-B, "using jit = ", E - D)
     # print((to_tuple_loop[-1][0][-1]))
     # print((to_tuple_vector[-1][0][-1]))f 
     # aggregate = jax_scan_aggregate(n, p, q, image)
