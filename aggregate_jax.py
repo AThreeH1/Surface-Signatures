@@ -18,7 +18,7 @@ class FFNs(nn.Module):
     n: int
     p: int
     q: int
-    hidden_dim: int = 20  # Default hidden dimension
+    hidden_dim: int = 64  # Default hidden dimension
     
     @nn.compact
     def __call__(self, Xt, Xs):
@@ -107,7 +107,7 @@ class FFNs(nn.Module):
         return N
 
 @partial(jax.jit, static_argnames=('n', 'p', 'q'))
-def init_ffn_params(n, p, q, seed=0):
+def init_ffn_params(n, p, q, seed=7):
     """
     Initialize parameters for both FFN methods.
     
@@ -374,7 +374,7 @@ def to_tuple(n, p, q, image, params):
     return (up_v, up_u, down_v, down_u, left_v, left_u, right_v, right_u, face_tensor)
 
 @partial(jax.jit, static_argnames=('n', 'p', 'q'))
-def to_tuple_vectorized(n, p, q, image, params):
+def to_tuple_vectorized(n, p, q, image):
     # image: (B, rows, cols)
     B, rows, cols = image.shape
     h, w = rows - 1, cols - 1  # grid dimensions
@@ -382,7 +382,7 @@ def to_tuple_vectorized(n, p, q, image, params):
     # --- Nested vmap helper for from_vector calls
     # from_vector expects scalar (or (B,) vector) inputs; we use a double vmap for grid cells.
     ffn_params = init_ffn_params(n=5, p=3, q=3)
-    fvu_func = lambda xt, xs: from_vector(n, p, q, xt, xs, params)
+    fvu_func = lambda xt, xs: from_vector_ffn(n, p, q, xt, xs, params=ffn_params)
     double_vmap = jax.vmap(jax.vmap(fvu_func, in_axes=(0, 0)), in_axes=(0, 0))
     
     # --- Down edges: for each grid cell (i, j), use image[:, i+1, j] and image[:, i+1, j+1]
@@ -426,7 +426,7 @@ def to_tuple_vectorized(n, p, q, image, params):
     # --- Kernel tensor N:
     # p1 = image[:, :h, :w], p2 = image[:, 1:, :w], p3 = image[:, 1:, 1:], p4 = image[:, :h, 1:]
     double_kernel = jax.vmap(jax.vmap(
-        lambda a, b, c, d: kernel_gl1(a, b, c, d, p, q, params),
+        lambda a, b, c, d: kernel_gl1_ffn(a, b, c, d, p, q, params=ffn_params),
         in_axes=(0, 0, 0, 0)
     ), in_axes=(0, 0, 0, 0))
     N_tensor = double_kernel(image[:, :h, :w],
@@ -560,28 +560,28 @@ def cal_aggregate(elements, n):
 
     return aggregated
 
-def jax_scan_aggregate(n, p, q, images, params, jax_jit: bool = True):
+def jax_scan_aggregate(n, p, q, images, jax_jit: bool = True):
 
     # Each component has shape (rows, cols, batch, ...)
-    calc_time = time.time()
-    up_v, up_u, down_v, down_u, left_v, left_u, right_v, right_u, face_tensor = to_tuple_vectorized(n, p, q, images, params)
+    # calc_time = time.time()
+    up_v, up_u, down_v, down_u, left_v, left_u, right_v, right_u, face_tensor = to_tuple_vectorized(n, p, q, images)
     elements = (up_v, up_u, down_v, down_u, left_v, left_u, right_v, right_u, face_tensor)
-    for element in elements:
-        element.block_until_ready()
-    final_time = time.time()
-    print("Time to calculate elements = ", final_time - calc_time)
+    # for element in elements:
+    #     element.block_until_ready()
+    # final_time = time.time()
+    # print("Time to calculate elements = ", final_time - calc_time)
 
     if jax_jit:
         compiled_function = jax.jit(cal_aggregate, static_argnames=('n',))
     else:
         compiled_function = cal_aggregate
 
-    time1 = time.time()
+    # time1 = time.time()
     aggregate = compiled_function(elements, n)
-    for element in aggregate:
-        element.block_until_ready()
-    time2 = time.time()
-    print("Time to calculate asso scan = ", time2 - time1)
+    # for element in aggregate:
+    #     element.block_until_ready()
+    # time2 = time.time()
+    # print("Time to calculate asso scan = ", time2 - time1)
 
     return aggregate 
 
@@ -628,12 +628,12 @@ if __name__ == "__main__":
     A = time.time()
     # to_tuple_loop = to_tuple(n, p, q, image)
     B = time.time()
-    agg1 = jax_scan_aggregate(n, p, q, image, params, jax_jit=True)
+    agg1 = jax_scan_aggregate(n, p, q, image, jax_jit=True)
     C = time.time()
     key = jax.random.PRNGKey(41)
     image = jax.random.uniform(key, shape=(batch_size, 28, 28))
     D = time.time()
-    agg2 = jax_scan_aggregate(n, p, q, image, params, jax_jit=True)
+    agg2 = jax_scan_aggregate(n, p, q, image, jax_jit=True)
     E = time.time()
     # "For looped to tuple = ", B-A, 
     print("For aggregate = ", C-B, "using jit = ", E - D)
