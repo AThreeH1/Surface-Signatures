@@ -23,7 +23,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 class ClassificationModel(nn.Module):
     n: int   # parameter for aggregate 
     p: int   # parameter for aggregate
-    q: int   # parameter for aggregate
+    q: int   # parameter for aggregate 
 
     @nn.compact  
     def __call__(self, images):
