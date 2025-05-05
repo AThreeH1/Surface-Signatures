@@ -157,7 +157,7 @@ def to_tuple_vectorized(n, p, q, image, from_vector, kernel_gl1):
     #   use image[:, i+1, j] and image[:, i+1, j+1]
     down_V, down_U = batch_call(
         from_vector,
-        image[:, 1:, :w].reshape(Batch_size, height * width),   # shape: (Batch_size, height*width)
+        image[:, 1:, :width].reshape(Batch_size, height * width),   # shape: (Batch_size, height*width)
         image[:, 1:, 1:].reshape(Batch_size, height * width)      # shape: (Batch_size, height*width)
     )
     down_V = down_V.reshape(Batch_size, height, width, n+p, n+p)
@@ -217,8 +217,8 @@ def to_tuple_vectorized(n, p, q, image, from_vector, kernel_gl1):
     left_V[:, :, 0, :, :] = left_direct_V
     left_U[:, :, 0, :, :] = left_direct_U
     if width > 1:
-        left_V[:, :, 1:, :, :] = right_V[:, :, :w-1, :, :]
-        left_U[:, :, 1:, :, :] = right_U[:, :, :w-1, :, :]
+        left_V[:, :, 1:, :, :] = right_V[:, :, :width-1, :, :]
+        left_U[:, :, 1:, :, :] = right_U[:, :, :width-1, :, :]
 
     # --- Compute the edge multiplication (batched matrix multiplications)
     inv_up_V = torch.linalg.inv(up_V)

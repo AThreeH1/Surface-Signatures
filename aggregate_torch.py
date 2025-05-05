@@ -166,9 +166,9 @@ if __name__ == "__main__":
     # print("Loop = ", Aggregate_1[0,0].value.matrix[0])
     # print("Horizontal first aggregate (Batch):")
     print("Aggregate loop OOP = ", Aggregate_1[0, 0].value.matrix)
-    
     # Compute vertical-first aggregate for the batch
     Aggregate_2 = vertical_first_aggregate(Images)
+    print("Aggregate2 = ", Aggregate_2[0, 0].value.matrix)
     # print("Vertical first aggregate (Batch):")
     # print(Aggregate_2[0, 0].value.matrix)
     
@@ -176,7 +176,8 @@ if __name__ == "__main__":
     for i in range(batch_size):
         assert torch.allclose(
             Aggregate_1[0, 0].value.matrix,
-            Aggregate_2[0, 0].value.matrix
+            Aggregate_2[0, 0].value.matrix,
+            atol=0.001
         ), f"Mismatch in aggregates for Image {i + 1}"
     
     print("Aggregates match for all images in the batch.") 

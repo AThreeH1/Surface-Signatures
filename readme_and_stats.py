@@ -63,11 +63,14 @@ image_width = 5
 image_height = 5
 
 params = {
-    'a': jnp.array(1.0),
-    'b': jnp.array(1.0),
-    'c': jnp.array(1.0),
-    'd': jnp.array(1.0), 
-    'e': jnp.array(1.0)
+    'a': jnp.ones((n,)),
+    'b': jnp.ones((n,)),
+    'b_prime': jnp.ones((n,)),
+    'c': jnp.ones((n,)),
+    'c_prime': jnp.ones((n,)),
+    'd': jnp.ones((n,)), 
+    'd_prime': jnp.ones((n,)),
+    'e': jnp.ones((q,))
     }
 
 torch.manual_seed(42)
@@ -75,14 +78,14 @@ images = torch.rand(batch_size, image_height, image_width, device = device, dtyp
 images_numpy = images.detach().cpu().numpy()  
 images_jax = jax.device_put(jnp.array(images_numpy))
 
-aggrgate_function_loop = aggregate_using_scan.loop_aggregate(n, p, q, images)
-aggregate_using_scan = scan_aggregate(n, p, q, images, torch_compile = False)
+# aggrgate_function_loop = aggregate_using_scan.loop_aggregate(n, p, q, images)
+# aggregate_using_scan = scan_aggregate(n, p, q, images, torch_compile = False)
 aggregate_using_loop = loop_aggregate(n, p, q, images, torch_compile = False)
 aggregate_using_scan_jax = jax_scan_aggregate(n, p, q, images_jax, params, jax_jit = True)
-print("aggregate_using_scan = ", aggregate_using_scan[-1][0][-1])
+# print("aggregate_using_scan = ", aggregate_using_scan[-1][0][-1])
 print("aggregate_using_scan_JAX = ",aggregate_using_scan_jax[-1][0][-1])
 print("aggregate_using_loop = ",aggregate_using_loop[0,0].value.matrix)
-print("aggrgate_function_loop = ", aggrgate_function_loop[-1][0][-1])
+# print("aggrgate_function_loop = ", aggrgate_function_loop[-1][0][-1])
 
 # assert torch.allclose(aggregate_using_scan[-1][0][-1], aggregate_using_loop[0,0].value.matrix, atol = 0.1)
 

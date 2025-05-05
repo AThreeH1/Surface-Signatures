@@ -8,10 +8,8 @@ import logging
 # Configure JAX
 jax.config.update("jax_enable_x64", True)
 
-import jax
-import jax.numpy as jnp
 from flax import linen as nn
-from functools import partial
+import functools 
 
 class FFNs(nn.Module):
     """Neural network modules for P, R, B matrices and kernel N."""
@@ -77,8 +75,13 @@ class FFNs(nn.Module):
         
         return fV, fU
     
+class KernelNet(nn.Module):
+    p: int
+    q: int
+    hidden_dim: int = 64
+
     @nn.compact
-    def compute_kernel(self, p1, p2, p3, p4):
+    def __call__(self, p1, p2, p3, p4):
         """
         Compute kernel N using a neural network.
         Args:
@@ -118,8 +121,8 @@ def init_ffn_params(n, p, q, seed=7):
     Returns:
         Dictionary of parameters
     """
-    model = FFNs(n=n, p=p, q=q)
-    kernel_model = FFNs(n=1, p=p, q=q)  # For kernel computation
+    edge_model = FFNs(n=n, p=p, q=q)
+    kernel_model = KernelNet(p=p, q=q)  # For kernel computation
     
     key = jax.random.PRNGKey(seed)
     key1, key2 = jax.random.split(key)
@@ -134,9 +137,8 @@ def init_ffn_params(n, p, q, seed=7):
     dummy_p4 = jnp.zeros((batch_size, 1))
     
     # Initialize parameters for both methods
-    edge_params = model.init(key1, dummy_Xt, dummy_Xs)
-    kernel_params = kernel_model.init(key2, method=FFNs.compute_kernel, 
-                                    p1=dummy_p1, p2=dummy_p2, p3=dummy_p3, p4=dummy_p4)
+    edge_params = edge_model.init(key1, dummy_Xt, dummy_Xs)
+    kernel_params = kernel_model.init(key2,  p1=dummy_p1, p2=dummy_p2, p3=dummy_p3, p4=dummy_p4)
     
     # Combine parameters
     return {'edge': edge_params, 'kernel': kernel_params}
@@ -170,8 +172,104 @@ def kernel_gl1_ffn(p1, p2, p3, p4, p, q, params):
     Returns:
         N: Kernel matrix
     """
-    model = FFNs(n=1, p=p, q=q)  # n doesn't matter for kernel computation
-    return model.apply(params['kernel'], method=FFNs.compute_kernel, p1=p1, p2=p2, p3=p3, p4=p4)
+    model = KernelNet(p=p, q=q)  # n doesn't matter for kernel computation
+    return model.apply(params['kernel'], p1=p1, p2=p2, p3=p3, p4=p4)
+
+# @functools.lru_cache(maxsize=None)
+# def _make_idx(n: int, p: int, q: int):
+#     """
+#     Returns a tuple of (POWERS, EVEN_MASK, ROW_IDX, COL_IDX, EYE_P, EYE_Q).
+#     Cached so we only pay the cost once for each (n,p,q) triple.
+#     """
+#     powers    = jnp.arange(1, n+1)              # (n,)
+#     row_idx   = jnp.arange(p).reshape(p, 1)     # (p,1)
+#     even_mask = (row_idx % 2 == 0).astype(float)  # (p,1)
+#     col_idx   = jnp.arange(1, q+1).reshape(1, 1, q)  # (1,1,q)
+#     eye_n     = jnp.eye(n)                      # (n,n)
+#     eye_p     = jnp.eye(p)                     # (p,p)
+#     eye_q     = jnp.eye(q)                     # (q,q)
+
+#     return powers, even_mask, row_idx, col_idx, eye_n, eye_p, eye_q
+
+# @partial(jax.jit, static_argnames=('n','p','q'))
+# def from_vector(n, p, q, Xt, Xs, params):
+#     # pull out our precomputed index arrays
+
+#     powers, even_mask, row_idx, col_idx, eye_n, eye_p, eye_q = _make_idx(n ,p ,q)
+
+#     batch_size = Xt.shape[0]
+#     dX_flat    = (Xs - Xt).reshape(batch_size, 1)  # (batch,1)
+
+#     # --- P block (batch, n, n) ---
+#     diag_vals = params['a'] * jnp.exp(dX_flat ** powers)  # (batch,n)
+#     P         = diag_vals[..., None] * eye_n        # (batch,n,n)
+
+#     # --- R block (batch, p, n) ---
+#     dX_pow = jnp.power(dX_flat, powers)[:, None, :]         # (batch,1,n)
+#     sin_t  = jnp.sin(dX_pow)
+#     cos_t  = jnp.cos(dX_pow)
+
+#     R = (even_mask[None, ...] *
+#             (params['b'] * sin_t + params['b_prime'] * sin_t * dX_flat[..., None]) +
+#          (1-even_mask)[None, ...] *
+#             (params['c'] * cos_t + params['c_prime'] * cos_t * dX_flat[..., None])
+#         )
+    
+#     # --- B block (batch, n, q) ---
+#     # row_idx==powers but tiled to (n,1)
+#     row = powers.reshape(1,n,1)
+#     B   = ( params['d'][None,:,None]
+#             * row
+#             * col_idx
+#             * (dX_flat[...,None,None] ** row)
+#           + params['d_prime'][None,:,None]
+#         ).squeeze(axis=1)
+
+#     # batched identity blocks
+#     S   = jnp.broadcast_to(eye_p, (batch_size, p, p))
+#     D   = jnp.broadcast_to(eye_q, (batch_size, q, q))
+
+#     zeros_np = jnp.zeros((batch_size, n, p))
+#     zeros_qn = jnp.zeros((batch_size, q, n))
+
+#     fV = jnp.concatenate([
+#             jnp.concatenate([P, zeros_np], axis=2),
+#             jnp.concatenate([R, S],       axis=2),
+#          ], axis=1)
+
+#     fU = jnp.concatenate([
+#             jnp.concatenate([P, B],       axis=2),
+#             jnp.concatenate([zeros_qn, D],axis=2),
+#          ], axis=1)
+
+#     return fV, fU
+
+# def _make_idx_k(p: int, q: int):
+#     """
+#     Returns (row_mult, col_exp, eye_p), cached per (p,q).
+#     - row_mult: shape (1,p,1)  = [1,2,…,p]
+#     - col_exp:  shape (1,1,q)  = [1,2,…,q]
+#     - eye_p:    shape (p,p)    = Identity
+#     """
+#     row_mult = jnp.arange(1, p+1).reshape(1, p, 1)
+#     col_exp  = jnp.arange(1, q+1).reshape(1, 1, q)
+#     eye_p    = jnp.eye(p)
+#     return row_mult, col_exp, eye_p
+
+# @partial(jax.jit, static_argnames=('p','q'))
+# def kernel_gl1(p1, p2, p3, p4, p, q, params):
+   
+#     row_mult, col_exp, eye_p = _make_idx_k(p, q)
+
+#     # reshape your combination once
+#     Y = (p1 + p3 - p2 - p4).reshape(-1, 1, 1)   # (batch,1,1)
+#     e_vec = params['e'].reshape(1, 1, q)       # (1,1,q)
+
+#     # actual computation (uncomment whichever you need)
+#     #— polynomial kernel variant:
+#     N = row_mult * (e_vec * jnp.power(Y, col_exp))  # (batch,p,q)
+
+#     return N
 
 @partial(jax.jit, static_argnames=('n', 'p', 'q'))
 def from_vector(n, p, q, Xt, Xs, params):
@@ -256,8 +354,7 @@ def from_vector(n, p, q, Xt, Xs, params):
     ### Assemble fV
     zeros_np = jnp.zeros((dX.shape[0], n, p))
     top_fV = jnp.concatenate([P, zeros_np], axis=2)
-    bottom_fV = jnp.concatenate([R, S], axis=2)
-    fV = jnp.concatenate([top_fV, bottom_fV], axis=1)
+
     
     # Build fU
     row_idx_B = jnp.arange(1, n+1).reshape(1, n, 1)  # shape (1, n, 1)
@@ -265,6 +362,10 @@ def from_vector(n, p, q, Xt, Xs, params):
 
     col_idx = jnp.arange(1, q+1).reshape(1, 1, q)       # shape (1, 1, q)
     B = d * row_idx_B * col_idx * (dX ** row_idx_B) + d_prime.reshape(1, n, 1)
+    # R = B
+
+    bottom_fV = jnp.concatenate([R, S], axis=2)
+    fV = jnp.concatenate([top_fV, bottom_fV], axis=1)
 
     D = jnp.eye(q)[jnp.newaxis, :, :].repeat(dX.shape[0], axis=0)
     zeros_qn = jnp.zeros((dX.shape[0], q, n))
@@ -286,6 +387,8 @@ def kernel_gl1(p1, p2, p3, p4, p, q, params):
 
     e_vec = params['e'].reshape(1, 1, q)
     N = row_mult * (e_vec * (Y ** col_exp))
+    # batch_size = p1.shape[0]  
+    # N = jnp.eye(p)[None, :, :].repeat(batch_size, axis=0)
     return N
 
 @partial(jax.jit, static_argnames=('n',))
@@ -381,7 +484,7 @@ def to_tuple_vectorized(n, p, q, image, params):
 
     # --- Nested vmap helper for from_vector calls
     # from_vector expects scalar (or (B,) vector) inputs; we use a double vmap for grid cells.
-    ffn_params = init_ffn_params(n=5, p=3, q=3)
+    ffn_params = init_ffn_params(n, p, q)
     fvu_func = lambda xt, xs: from_vector(n, p, q, xt, xs, params)
     double_vmap = jax.vmap(jax.vmap(fvu_func, in_axes=(0, 0)), in_axes=(0, 0))
     
@@ -424,7 +527,7 @@ def to_tuple_vectorized(n, p, q, image, params):
     left_u = jnp.concatenate([left_direct_u, left_rest_u], axis=2)
     
     # --- Kernel tensor N:
-    # p1 = image[:, :h, :w], p2 = image[:, 1:, :w], p3 = image[:, 1:, 1:], p4 = image[:, :h, 1:]
+    # p1 = image[:, :h, :w], p2 = image[:, 1:, :w], p3 = image[:~, 1:, 1:], p4 = image[:, :h, 1:]
     double_kernel = jax.vmap(jax.vmap(
         lambda a, b, c, d: kernel_gl1(a, b, c, d, p, q, params),
         in_axes=(0, 0, 0, 0)
@@ -609,8 +712,8 @@ def jax_scan_aggregate_benchmark(n, p, q, images, runs, jax_jit: bool = True):
     print("Using associative scan in JAX - ", f"Average time: {sum(Time)/runs},", f"Final time: {final_time},", f"jax_jit = {jax_jit}")
 
 if __name__ == "__main__":
-    batch_size = 64
-    n, p, q = 5, 3, 3
+    batch_size = 1
+    n, p, q = 3, 1, 1
 
     params = {
     'a': jnp.ones((n,)),
@@ -628,13 +731,29 @@ if __name__ == "__main__":
     A = time.time()
     # to_tuple_loop = to_tuple(n, p, q, image)
     B = time.time()
-    agg1 = jax_scan_aggregate(n, p, q, image, jax_jit=True)
+    agg1 = jax_scan_aggregate(n, p, q, image, params, jax_jit=True)
     C = time.time()
     key = jax.random.PRNGKey(41)
     image = jax.random.uniform(key, shape=(batch_size, 28, 28))
     D = time.time()
-    agg2 = jax_scan_aggregate(n, p, q, image, jax_jit=True)
+    agg2 = jax_scan_aggregate(n, p, q, image, params, jax_jit=True)
     E = time.time()
+
+    up_v = agg2[0][0][-1]
+    up_u = agg2[1][0][-1]
+    down_v = agg2[2][0][-1]
+    down_u = agg2[3][0][-1]
+    left_v = agg2[4][0][-1]
+    left_u = agg2[5][0][-1]
+    right_v = agg2[6][0][-1]
+    right_u = agg2[7][0][-1]
+
+    x1 = image[:, -1, -1]
+    edges_mul = (down_v @ right_v @ up_v @ left_v , down_u @ right_u @ up_u @ left_u)
+    N = kernel_gl1(x1, x1, x1, x1, p, q, params)
+    face_ideally = reverse_feedback(n, edges_mul, N)
+    print(f"{face_ideally=}")
+    print(f"{agg2[-1][0][-1]=}")
     # "For looped to tuple = ", B-A, 
     print("For aggregate = ", C-B, "using jit = ", E - D)
     # print((to_tuple_loop[-1][0][-1]))

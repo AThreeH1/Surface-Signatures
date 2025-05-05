@@ -4,13 +4,14 @@ import jax.numpy as jnp
 import optax
 from flax import linen as nn
 from flax.training import train_state
-from torchvision.datasets import MNIST
+from torchvision.datasets import MNIST, FashionMNIST
 from torch.utils.data import DataLoader
 import numpy as np
 from functools import partial
 from aggregate_jax import jax_scan_aggregate
 import logging 
 from tqdm import tqdm
+# import wandb
 
 jax.clear_caches()
 
@@ -20,6 +21,21 @@ os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+# # Hyperparameters
+# config = {
+#     'seed': 3,
+#     'learning_rate': 1e-4,
+#     'batch_size': 128,
+#     'num_epochs': 15,
+#     'n': 4,
+#     'p': 3,
+#     'q': 3,
+#     'project_name': 'jax-fashion-mnist-aggregate'
+# }
+
+# # Initialize W&B run
+# wandb.init(project=config['project_name'], config=config)
+
 class ClassificationModel(nn.Module):
     n: int   # parameter for aggregate 
     p: int   # parameter for aggregate
@@ -27,24 +43,43 @@ class ClassificationModel(nn.Module):
 
     @nn.compact  
     def __call__(self, images):
-        # Define model parameters (a, b, c, d, e) using self.param.
-        # params_dict = {
-        #     'a': self.a,
-        #     'b': self.b,
-        #     'b_prime' : self.b_prime,
-        #     'c': self.c,
-        #     'c_prime' : self.c_prime,
-        #     'd': self.d,
-        #     'd_prime' : self.d_prime,
-        #     'e': self.e,
-        # }
+        # Learnable parameters
+        a = self.param('a', nn.initializers.ones, (self.n,))
+        b = self.param('b', nn.initializers.ones, (self.n,))
+        b_prime = self.param('b_prime', nn.initializers.ones, (self.n,))
+        c = self.param('c', nn.initializers.ones, (self.n,))
+        c_prime = self.param('c_prime', nn.initializers.ones, (self.n,))
+        d = self.param('d', nn.initializers.ones, (self.n,))
+        d_prime = self.param('d_prime', nn.initializers.ones, (self.n,))
+        e = self.param('e', nn.initializers.ones, (self.q,))
+
+        params_dict = {
+            'a': a,
+            'b': b,
+            'b_prime': b_prime,
+            'c': c,
+            'c_prime': c_prime,
+            'd': d,
+            'd_prime': d_prime,
+            'e': e,
+        }
         # Get the aggregated representation.
-        aggregate = jax_scan_aggregate(self.n, self.p, self.q, images, jax_jit=True)
-        surface_signature = aggregate[-1][0][-1]
+        aggregate = jax_scan_aggregate(self.n, self.p, self.q, images, params_dict, jax_jit=True) #shape (last element): rows, cols, batch_size, np, nq
+        surface_signature = aggregate[-1]
+        batch_surface_signature = jnp.transpose(surface_signature, (2, 0, 1, 3, 4))
+        # batch_surface_signature = images[..., None, None] #Batch_size, Rows, Cols, 1, 1
+        pooled_surface_signature = jax.lax.reduce_window( 
+            batch_surface_signature,   
+            init_value=0.0,  
+            computation=jax.lax.add,  
+            window_dimensions=(1, 4, 4, 1, 1),  
+            window_strides=(1, 4, 4, 1, 1),  
+            padding="VALID"
+        ) / 16.0
         # Flatten the aggregated output.
-        surface_signature_flat = surface_signature.reshape((surface_signature.shape[0], -1))
+        surface_signature_flat = pooled_surface_signature.reshape((pooled_surface_signature.shape[0], -1))
         # Feed-forward network
-        x = nn.Dense(32)(surface_signature_flat)
+        x = nn.Dense(256)(surface_signature_flat)
         x = nn.relu(x)
         logits = nn.Dense(10)(x)
         return logits
@@ -133,8 +168,8 @@ def custom_collate_fn(batch):
 mnist_img_size = (28, 28)
 batch_size = 128
 
-train_dataset = MNIST(root='train_mnist', train=True, download=True, transform=custom_transform)
-test_dataset = MNIST(root='test_mnist', train=False, download=True, transform=custom_transform)
+train_dataset = FashionMNIST(root='train_fashion_mnist', train=True, download=True, transform=custom_transform)
+test_dataset = FashionMNIST(root='test_fashion_mnist', train=False, download=True, transform=custom_transform)
 
 train_loader = DataLoader(train_dataset, batch_size, shuffle=True, collate_fn=custom_collate_fn, drop_last=True)
 test_loader = DataLoader(test_dataset, batch_size, shuffle=False, collate_fn=custom_collate_fn, drop_last=True)
@@ -163,9 +198,9 @@ def create_train_state(n, p, q, learning_rate):
 
 # Finally let's define the high-level training/val loops
 seed = 3  
-learning_rate = 0.001
+learning_rate = 0.0001
 num_epochs = 20
-n = 5
+n = 4
 p = 3
 q = 3
 
@@ -177,3 +212,22 @@ for epoch in range(1, num_epochs + 1):
 
     test_metrics = evaluate_model(train_state, test_loader)
     print(f"Test epoch: {epoch}, loss: {test_metrics['loss']}, accuracy: {test_metrics['accuracy'] * 100}")
+
+
+# OVERFITTING TEST
+
+# # Pick 10 samples from the original training dataset
+# small_raw_images = [train_dataset[i][0] for i in range(10)]  # Applies transform
+# small_labels = [train_dataset[i][1] for i in range(10)]
+
+# # Convert to batched arrays (Numpy -> JAX)
+# small_images = jnp.array(np.stack(small_raw_images))         # shape (10, 28, 28)
+# small_labels = jnp.array(small_labels)                       # shape (10,)
+
+# # Overfit loop with debug prints
+# state = create_train_state(n, p, q, learning_rate)
+# for step in range(40):
+#     state, metrics = train_step(state, small_images, small_labels)
+#     print(f"[Step {step:2d}] loss={metrics['loss']:.4f}, acc={metrics['accuracy']*100:.1f}%")
+
+

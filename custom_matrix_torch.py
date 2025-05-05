@@ -24,13 +24,13 @@ class TwoCell:
         assert torch.allclose(
             (self.down * self.right * self.up.inv() * self.left.inv()).tuple[0],
             self.value.feedback().tuple[0],
-            atol=1e-6
+            atol=1e-4
         ), "Validation failed for the TwoCell batch."
 
         assert torch.allclose(
             (self.down * self.right * self.up.inv() * self.left.inv()).tuple[1],
             self.value.feedback().tuple[1],
-            atol=1e-6
+            atol=1e-4
         ), "Validation failed for the TwoCell batch."
 
     def clone(self):

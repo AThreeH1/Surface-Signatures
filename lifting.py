@@ -1,68 +1,83 @@
 import torch
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-# Assume device is defined (e.g., device = torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+def from_vector(n, p, q, batch_size, Xt, Xs):
+    """
+    Constructs the matrices fV and fU based on input parameters using PyTorch.
 
-def from_vector(n, p, q, m, Xt, Xs):
-    # Compute the batch of differences dX (assumed to be a scalar per batch element)
-    dX = (Xs - Xt).to(device)  # shape: (m, ...), e.g. (m,)
-    # Reshape to (m, 1, 1) for broadcasting in our operations
-    dX = dX.view(m, 1, 1)
-    
-    ### Build block for fV and fU: the top-left block P (n x n)
-    # For each batch element, we want a diagonal matrix with:
-    # [exp(dX^1), exp(dX^2), ..., exp(dX^n)]
-    powers = torch.arange(1, n+1, device=device, dtype = torch.float64).view(1, n)  # shape (1, n)
-    # dX flattened to (m,1) so that each batch element is raised to each power:
-    dX_flat = dX.view(m, 1)  # shape (m, 1)
-    diag_vals = torch.exp(dX_flat ** powers)  # shape (m, n)
-    # Create a batch of diagonal matrices
-    P = torch.diag_embed(diag_vals)  # shape: (m, n, n)
-    
-    ### Build the bottom-left block R for fV (p x n)
-    # For each batch element, create a matrix whose j-th column is:
-    # row0: sin(dX^(j+1)), row1: cos(dX^(j+1)), row2: sin(dX^(j+1)), etc.
-    dX_power = dX_flat ** torch.arange(1, n+1, device=device).view(1, n)  # shape (m, n)
-    # Expand to (m, p, n)
-    dX_power = dX_power.unsqueeze(1).expand(m, p, n)
-    # Create a row index tensor for p rows
-    row_idx = torch.arange(p, device=device).view(p, 1)
-    # For even-indexed rows (0,2,…) use sin; for odd-indexed rows use cos.
-    even_mask = (row_idx % 2 == 0).float().view(1, p, 1)  # shape (1, p, 1)
-    R = even_mask * torch.sin(dX_power) + (1 - even_mask) * torch.cos(dX_power)
-    # R shape: (m, p, n)
-    
-    ### Bottom-right block for fV: S as an identity of size p
-    S = torch.eye(p, device=device).unsqueeze(0).repeat(m, 1, 1)  # shape: (m, p, p)
-    
-    ### Assemble fV as a block matrix
-    # Top block: [P, 0] with P (m, n, n) and a zeros block (m, n, p)
-    zeros_np = torch.zeros(m, n, p, device=device)
-    top_fV = torch.cat([P, zeros_np], dim=2)  # shape: (m, n, n+p)
-    # Bottom block: [R, S]
-    bottom_fV = torch.cat([R, S], dim=2)  # shape: (m, p, n+p)
-    # fV overall is (m, n+p, n+p)
-    fV = torch.cat([top_fV, bottom_fV], dim=1)
-    
-    ### Now build fU:
-    # Top-right block B (n x q): for each batch element, for row i and column j:
-    # B[i,j] = (i+1) * (dX)^(j+1)
-    row_factors = torch.arange(1, n+1, device=device).view(1, n, 1)  # shape (1, n, 1)
-    col_exponents = torch.arange(1, q+1, device=device).view(1, 1, q)  # shape (1, 1, q)
-    B = row_factors * (dX ** col_exponents)  # shape: (m, n, q)
-    
-    # Bottom-right block D for fU: identity (q x q)
-    D = torch.eye(q, device=device).unsqueeze(0).repeat(m, 1, 1)  # shape: (m, q, q)
-    
-    # Assemble fU: top block is [P, B] (P: m x n x n, B: m x n x q)
-    top_fU = torch.cat([P, B], dim=2)  # shape: (m, n, n+q)
-    # Bottom block is [0, D] (zeros: (m, q, n))
-    zeros_qn = torch.zeros(m, q, n, device=device)
-    bottom_fU = torch.cat([zeros_qn, D], dim=2)  # shape: (m, q, n+q)
-    # fU overall is (m, n+q, n+q)
-    fU = torch.cat([top_fU, bottom_fU], dim=1)
-    
-    return (fV, fU)
+    Args:
+        n, p, q : integers
+        Xt (tensor): Reference input points, shape (batch, ...).
+        Xs (tensor): Target input points, shape (batch, ...).
+
+    Returns:
+        tuple: (fV, fU)
+            - fV (tensor): Shape (batch, n+p, n+p)
+            - fU (tensor): Shape (batch, n+q, n+q)
+    """
+
+    a = torch.ones(n).to(device)
+    b = torch.ones(n).to(device)
+    b_prime = torch.ones(n).to(device)
+    c = torch.ones(n).to(device)
+    c_prime = torch.ones(n).to(device)
+    d = torch.ones(n).to(device)
+    d_prime = torch.ones(n).to(device)
+
+    batch_size = Xt.shape[0]
+    dX = (Xs - Xt).reshape(batch_size, 1, 1)  # shape (batch, 1, 1)
+
+    # Block P (n x n diagonal)
+    powers = torch.arange(1, n + 1, dtype=dX.dtype, device=dX.device).reshape(1, n)  # (1, n)
+    dX_flat = dX.view(batch_size, 1)  # (batch, 1)
+    diag_vals = a * torch.exp(dX_flat ** powers)  # (batch, n)
+
+    P = torch.zeros((batch_size, n, n), dtype=dX.dtype, device=dX.device)
+    for i in range(n):
+        P[:, i, i] = diag_vals[:, i]
+
+    # Block R (p x n)
+    dX_power = dX_flat ** torch.arange(1, n + 1, dtype=dX.dtype, device=dX.device).reshape(1, n)
+    dX_power = dX_power.unsqueeze(1)  # (batch, 1, n)
+    dX_factor = dX_flat.view(batch_size, 1, 1).expand_as(dX_power)  # (batch, 1, n)
+
+    row_idx = torch.arange(p, device=dX.device).view(p, 1)  # (p, 1)
+    even_mask = (row_idx % 2 == 0).float().view(1, p, 1)  # (1, p, 1)
+
+    sin_term = torch.sin(dX_power)
+    even_block = (b * sin_term) + (b_prime * sin_term * dX_factor)
+
+    cos_term = torch.cos(dX_power)
+    odd_block = (c * cos_term) + (c_prime * cos_term * dX_factor)
+
+    R = even_mask * even_block + (1 - even_mask) * odd_block  # (batch, p, n)
+
+    # Block S (identity, p x p)
+    S = torch.eye(p, dtype=dX.dtype, device=dX.device).unsqueeze(0).expand(batch_size, -1, -1)  # (batch, p, p)
+
+    # Assemble fV
+    zeros_np = torch.zeros((batch_size, n, p), dtype=dX.dtype, device=dX.device)
+    top_fV = torch.cat([P, zeros_np], dim=2)  # (batch, n, n+p)
+    bottom_fV = torch.cat([R, S], dim=2)      # (batch, p, n+p)
+    fV = torch.cat([top_fV, bottom_fV], dim=1)  # (batch, n+p, n+p)
+
+    # Block B (n x q)
+    row_idx_B = torch.arange(1, n + 1, dtype=dX.dtype, device=dX.device).view(1, n, 1)
+    col_idx = torch.arange(1, q + 1, dtype=dX.dtype, device=dX.device).view(1, 1, q)
+    d = d.view(1, n, 1)
+    d_prime = d_prime.view(1, n, 1)
+
+    B = d * row_idx_B * col_idx * (dX ** row_idx_B) + d_prime  # (batch, n, q)
+
+    # Block D (identity, q x q)
+    D = torch.eye(q, dtype=dX.dtype, device=dX.device).unsqueeze(0).expand(batch_size, -1, -1)  # (batch, q, q)
+    zeros_qn = torch.zeros((batch_size, q, n), dtype=dX.dtype, device=dX.device)
+
+    top_fU = torch.cat([P, B], dim=2)         # (batch, n, n+q)
+    bottom_fU = torch.cat([zeros_qn, D], dim=2)  # (batch, q, n+q)
+    fU = torch.cat([top_fU, bottom_fU], dim=1)  # (batch, n+q, n+q)
+
+    return fV, fU
 
 def kernel_gl1(p1, p2, p3, p4, p, q):
     """
